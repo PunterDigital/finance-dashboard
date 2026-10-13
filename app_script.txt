@@ -1,0 +1,942 @@
+// ============================================================
+// FINANCE TRACKER - GOOGLE APPS SCRIPT
+// ============================================================
+// Paste this into Extensions > Apps Script in your Google Sheet
+// After pasting, reload the sheet - a "Finance Tracker" menu will appear
+// ============================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Finance Tracker')
+    .addItem('Fetch Exchange Rates (All)', 'fetchAllExchangeRates')
+    .addItem('Fetch Exchange Rates (Missing Only)', 'fetchMissingExchangeRates')
+    .addSeparator()
+    .addItem('Detect Recurring Transactions', 'detectRecurringTransactions')
+    .addSeparator()
+    .addItem('Update Monthly Summary', 'updateMonthlySummary')
+    .addItem('Update Burn Rate Actuals', 'updateBurnRateActuals')
+    .addItem('Update Spend per Category', 'updateSpendPerCategory')
+    .addSeparator()
+    .addItem('Run All Updates', 'runAllUpdates')
+    .addToUi();
+}
+
+// ============================================================
+// CURRENCY CONVERSION
+// ============================================================
+// Uses the free exchangerate.host API for mid-market historical rates
+// Falls back to Google Finance if API fails
+
+/**
+ * Fetch mid-market exchange rate for a given date and currency pair
+ * @param {string} fromCurrency - Source currency code (e.g. "EUR")
+ * @param {string} toCurrency - Target currency code (e.g. "CZK")  
+ * @param {Date} date - Transaction date
+ * @returns {number} Exchange rate
+ */
+function getExchangeRate(fromCurrency, toCurrency, date) {
+  if (fromCurrency === toCurrency) return 1;
+  
+  var dateStr = Utilities.formatDate(date, 'UTC', 'yyyy-MM-dd');
+  
+  // Try exchangerate.host (free, no API key needed)
+  try {
+    var url = 'https://api.exchangerate.host/' + dateStr 
+              + '?base=' + fromCurrency 
+              + '&symbols=' + toCurrency;
+    var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+    var data = JSON.parse(response.getContentText());
+    
+    if (data.success && data.rates && data.rates[toCurrency]) {
+      return data.rates[toCurrency];
+    }
+  } catch(e) {
+    Logger.log('exchangerate.host failed: ' + e.toString());
+  }
+  
+  // Fallback: try frankfurter.app (free ECB rates)
+  try {
+    var url2 = 'https://api.frankfurter.app/' + dateStr 
+               + '?from=' + fromCurrency 
+               + '&to=' + toCurrency;
+    var response2 = UrlFetchApp.fetch(url2, {muteHttpExceptions: true});
+    var data2 = JSON.parse(response2.getContentText());
+    
+    if (data2.rates && data2.rates[toCurrency]) {
+      return data2.rates[toCurrency];
+    }
+  } catch(e) {
+    Logger.log('frankfurter.app failed: ' + e.toString());
+  }
+  
+  // Final fallback: Google Finance formula approach
+  // This returns current rate, not historical - flag it
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('_temp_fx');
+    if (!sheet) {
+      sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('_temp_fx');
+      sheet.hideSheet();
+    }
+    sheet.getRange('A1').setFormula('=GOOGLEFINANCE("CURRENCY:' + fromCurrency + toCurrency + '")');
+    SpreadsheetApp.flush();
+    Utilities.sleep(1000);
+    var rate = sheet.getRange('A1').getValue();
+    if (rate && rate > 0) return rate;
+  } catch(e) {
+    Logger.log('Google Finance fallback failed: ' + e.toString());
+  }
+  
+  return null;
+}
+
+/**
+ * Fetch exchange rates for all transactions that have a date, amount, and currency
+ */
+function fetchAllExchangeRates() {
+  _fetchExchangeRates(false);
+}
+
+/**
+ * Fetch exchange rates only for rows missing a rate
+ */
+function fetchMissingExchangeRates() {
+  _fetchExchangeRates(true);
+}
+
+function _fetchExchangeRates(onlyMissing) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Transactions');
+  var lastRow = sheet.getLastRow();
+  
+  if (lastRow < 5) {
+    SpreadsheetApp.getUi().alert('No transactions found.');
+    return;
+  }
+  
+  var data = sheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  var updated = 0;
+  var errors = 0;
+  
+  for (var i = 0; i < data.length; i++) {
+    var date = data[i][0];       // Column A: Date
+    var amount = data[i][4];     // Column E: Amount
+    var currency = data[i][5];   // Column F: Currency
+    var existingRate = data[i][6]; // Column G: Exchange Rate
+    
+    // Skip empty rows
+    if (!date || !amount || !currency) continue;
+    
+    // Skip if rate exists and we only want missing
+    if (onlyMissing && existingRate && existingRate !== '' && existingRate !== 0) continue;
+    
+    // Skip if same as base currency (CZK)
+    if (currency === 'CZK') {
+      sheet.getRange(i + 5, 7).setValue(1);
+      continue;
+    }
+    
+    // Ensure date is a Date object
+    if (!(date instanceof Date)) {
+      date = new Date(date);
+    }
+    
+    var rate = getExchangeRate(currency, 'CZK', date);
+    
+    if (rate !== null) {
+      sheet.getRange(i + 5, 7).setValue(rate);
+      updated++;
+    } else {
+      errors++;
+      Logger.log('Failed to get rate for row ' + (i + 5) + ': ' + currency + ' on ' + date);
+    }
+    
+    // Rate limit courtesy pause
+    Utilities.sleep(250);
+  }
+  
+  SpreadsheetApp.getUi().alert(
+    'Exchange rates updated!\n\n'
+    + 'Updated: ' + updated + ' rows\n'
+    + 'Errors: ' + errors + ' rows\n\n'
+    + (errors > 0 ? 'Check the Apps Script logs for error details.' : '')
+  );
+}
+
+// ============================================================
+// RECURRING TRANSACTION DETECTION
+// ============================================================
+
+/**
+ * Scans transactions and identifies recurring patterns
+ * Groups by description similarity and amount, looks for monthly/weekly patterns
+ */
+function detectRecurringTransactions() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var txSheet = ss.getSheetByName('Transactions');
+  var recSheet = ss.getSheetByName('Recurring');
+  var lastRow = txSheet.getLastRow();
+  
+  if (lastRow < 5) {
+    SpreadsheetApp.getUi().alert('No transactions to analyze.');
+    return;
+  }
+  
+  var data = txSheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  
+  // Build a map: normalized description + approximate amount -> list of dates
+  var patterns = {};
+  
+  for (var i = 0; i < data.length; i++) {
+    var date = data[i][0];
+    var desc = data[i][1];
+    var account = data[i][2];
+    var category = data[i][3];
+    var amount = data[i][4];
+    var currency = data[i][5];
+    
+    if (!date || !desc || !amount) continue;
+    
+    // Normalize description: lowercase, trim, remove date-like patterns and ref numbers
+    var normDesc = String(desc).toLowerCase().trim()
+      .replace(/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/g, '')  // Remove dates
+      .replace(/ref[\s:#]*\w+/gi, '')                            // Remove ref numbers
+      .replace(/\s+/g, ' ')                                      // Collapse whitespace
+      .trim();
+    
+    // Key by description + rounded amount (within 5% tolerance)
+    var amountKey = Math.round(Math.abs(amount) / 10) * 10; // Round to nearest 10
+    var key = normDesc + '|' + amountKey + '|' + currency;
+    
+    if (!patterns[key]) {
+      patterns[key] = {
+        description: desc,
+        amount: amount,
+        currency: currency,
+        account: account,
+        category: category,
+        dates: []
+      };
+    }
+    
+    if (date instanceof Date) {
+      patterns[key].dates.push(date);
+    } else {
+      patterns[key].dates.push(new Date(date));
+    }
+  }
+  
+  // Analyze patterns for recurrence
+  var recurring = [];
+  
+  for (var key in patterns) {
+    var p = patterns[key];
+    if (p.dates.length < 2) continue; // Need at least 2 occurrences
+    
+    // Sort dates
+    p.dates.sort(function(a, b) { return a - b; });
+    
+    // Calculate intervals between occurrences (in days)
+    var intervals = [];
+    for (var j = 1; j < p.dates.length; j++) {
+      var diffDays = Math.round((p.dates[j] - p.dates[j-1]) / (1000 * 60 * 60 * 24));
+      intervals.push(diffDays);
+    }
+    
+    if (intervals.length === 0) continue;
+    
+    // Determine average interval
+    var avgInterval = intervals.reduce(function(a, b) { return a + b; }, 0) / intervals.length;
+    
+    // Classify frequency with tolerance
+    var frequency = null;
+    if (avgInterval >= 5 && avgInterval <= 10) frequency = 'Weekly';
+    else if (avgInterval >= 12 && avgInterval <= 17) frequency = 'Bi-Weekly';
+    else if (avgInterval >= 25 && avgInterval <= 35) frequency = 'Monthly';
+    else if (avgInterval >= 80 && avgInterval <= 100) frequency = 'Quarterly';
+    else if (avgInterval >= 340 && avgInterval <= 400) frequency = 'Annually';
+    
+    if (!frequency) continue;
+    
+    // Check consistency - standard deviation should be reasonable
+    var variance = intervals.reduce(function(sum, val) {
+      return sum + Math.pow(val - avgInterval, 2);
+    }, 0) / intervals.length;
+    var stdDev = Math.sqrt(variance);
+    
+    // Allow some flexibility (std dev < 30% of average)
+    if (stdDev > avgInterval * 0.3 && p.dates.length < 4) continue;
+    
+    var lastDate = p.dates[p.dates.length - 1];
+    var nextExpected = new Date(lastDate);
+    
+    switch(frequency) {
+      case 'Weekly': nextExpected.setDate(nextExpected.getDate() + 7); break;
+      case 'Bi-Weekly': nextExpected.setDate(nextExpected.getDate() + 14); break;
+      case 'Monthly': nextExpected.setMonth(nextExpected.getMonth() + 1); break;
+      case 'Quarterly': nextExpected.setMonth(nextExpected.getMonth() + 3); break;
+      case 'Annually': nextExpected.setFullYear(nextExpected.getFullYear() + 1); break;
+    }
+    
+    recurring.push({
+      description: p.description,
+      amount: p.amount,
+      currency: p.currency,
+      account: p.account,
+      category: p.category,
+      frequency: frequency,
+      lastSeen: lastDate,
+      nextExpected: nextExpected,
+      occurrences: p.dates.length
+    });
+  }
+  
+  // Sort by occurrences (most confident first)
+  recurring.sort(function(a, b) { return b.occurrences - a.occurrences; });
+  
+  // Write to Recurring sheet
+  // Find first empty row (don't overwrite manual entries)
+  var recLastRow = recSheet.getLastRow();
+  var startRow = Math.max(5, recLastRow + 1);
+  
+  // Get existing descriptions to avoid duplicates
+  var existingDescs = {};
+  if (recLastRow >= 5) {
+    var existingData = recSheet.getRange(5, 1, recLastRow - 4, 1).getValues();
+    for (var k = 0; k < existingData.length; k++) {
+      if (existingData[k][0]) {
+        existingDescs[String(existingData[k][0]).toLowerCase().trim()] = true;
+      }
+    }
+  }
+  
+  var added = 0;
+  for (var m = 0; m < recurring.length; m++) {
+    var rec = recurring[m];
+    
+    // Skip if already exists
+    if (existingDescs[String(rec.description).toLowerCase().trim()]) continue;
+    
+    var row = startRow + added;
+    recSheet.getRange(row, 1).setValue(rec.description);
+    recSheet.getRange(row, 2).setValue(rec.amount);
+    recSheet.getRange(row, 3).setValue(rec.currency);
+    recSheet.getRange(row, 4).setValue(rec.account);
+    recSheet.getRange(row, 5).setValue(rec.category);
+    recSheet.getRange(row, 6).setValue(rec.frequency);
+    recSheet.getRange(row, 7).setValue(rec.lastSeen);
+    recSheet.getRange(row, 8).setValue(rec.nextExpected);
+    recSheet.getRange(row, 9).setValue('Yes');
+    added++;
+  }
+  
+  // Also mark transactions that match recurring items
+  var txData = txSheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  for (var n = 0; n < txData.length; n++) {
+    var txDesc = String(txData[n][1]).toLowerCase().trim();
+    for (var p2 = 0; p2 < recurring.length; p2++) {
+      if (txDesc === String(recurring[p2].description).toLowerCase().trim()) {
+        txSheet.getRange(n + 5, 12).setValue('Yes');
+        break;
+      }
+    }
+  }
+  
+  SpreadsheetApp.getUi().alert(
+    'Recurring detection complete!\n\n'
+    + 'Patterns analyzed: ' + Object.keys(patterns).length + '\n'
+    + 'Recurring items found: ' + recurring.length + '\n'
+    + 'New items added: ' + added + '\n\n'
+    + 'Review the Recurring tab and adjust as needed.'
+  );
+}
+
+// ============================================================
+// MONTHLY SUMMARY UPDATER
+// ============================================================
+
+function updateMonthlySummary() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var txSheet = ss.getSheetByName('Transactions');
+  var sumSheet = ss.getSheetByName('Monthly Summary');
+  var lastRow = txSheet.getLastRow();
+  
+  if (lastRow < 5) {
+    SpreadsheetApp.getUi().alert('No transactions to summarize.');
+    return;
+  }
+  
+  var data = txSheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  
+  // Group by month
+  var months = {};
+  
+  for (var i = 0; i < data.length; i++) {
+    var date = data[i][0];
+    var type = data[i][8];     // Column I: Type
+    var amountCZK = data[i][7]; // Column H: Amount in CZK
+    var category = data[i][3];  // Column D: Category
+    
+    if (!date || !amountCZK) continue;
+    
+    if (!(date instanceof Date)) date = new Date(date);
+    var monthKey = Utilities.formatDate(date, 'UTC', 'yyyy-MM');
+    
+    if (!months[monthKey]) {
+      months[monthKey] = {
+        income: 0,
+        expenses: 0,
+        categories: {},
+        days: new Set ? new Set() : {},
+        dayCount: 0
+      };
+    }
+    
+    var absAmount = Math.abs(amountCZK);
+    
+    if (type === 'Income') {
+      months[monthKey].income += absAmount;
+    } else if (type === 'Expense') {
+      months[monthKey].expenses += absAmount;
+      
+      // Track category spending
+      var catName = category || 'Uncategorized';
+      if (!months[monthKey].categories[catName]) {
+        months[monthKey].categories[catName] = 0;
+      }
+      months[monthKey].categories[catName] += absAmount;
+    }
+    
+    // Track unique days for daily average
+    var dayKey = Utilities.formatDate(date, 'UTC', 'yyyy-MM-dd');
+    if (months[monthKey].days && typeof months[monthKey].days.add === 'function') {
+      months[monthKey].days.add(dayKey);
+    }
+  }
+  
+  // Sort months
+  var sortedMonths = Object.keys(months).sort();
+  
+  // Write to summary
+  var row = 5;
+  for (var m = 0; m < sortedMonths.length; m++) {
+    var mk = sortedMonths[m];
+    var md = months[mk];
+    
+    // Find top expense category
+    var topCat = '';
+    var topAmount = 0;
+    for (var cat in md.categories) {
+      if (md.categories[cat] > topAmount) {
+        topAmount = md.categories[cat];
+        topCat = cat;
+      }
+    }
+    
+    // Calculate days in month for daily average
+    var daysInMonth = new Date(parseInt(mk.split('-')[0]), parseInt(mk.split('-')[1]), 0).getDate();
+    var dailySpend = md.expenses / daysInMonth;
+    var net = md.income - md.expenses;
+    var savingsRate = md.income > 0 ? net / md.income : 0;
+    
+    sumSheet.getRange(row, 1).setValue(mk);
+    sumSheet.getRange(row, 2).setValue(Math.round(md.income));
+    sumSheet.getRange(row, 3).setValue(Math.round(md.expenses));
+    sumSheet.getRange(row, 4).setValue(Math.round(net));
+    sumSheet.getRange(row, 5).setValue(topCat + ' (' + Math.round(topAmount).toLocaleString() + ')');
+    sumSheet.getRange(row, 6).setValue(Math.round(dailySpend));
+    sumSheet.getRange(row, 7).setValue(savingsRate);
+    
+    row++;
+  }
+  
+  SpreadsheetApp.getUi().alert('Monthly summary updated with ' + sortedMonths.length + ' months of data.');
+}
+
+// ============================================================
+// BURN RATE ACTUALS UPDATER
+// ============================================================
+
+function updateBurnRateActuals() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var txSheet = ss.getSheetByName('Transactions');
+  var catSheet = ss.getSheetByName('Categories');
+  var burnSheet = ss.getSheetByName('Burn Rate');
+  var lastRow = txSheet.getLastRow();
+  
+  if (lastRow < 5) return;
+  
+  var txData = txSheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  var catLastRow = catSheet.getLastRow();
+  
+  // Build category -> group map
+  var catGroupMap = {};
+  if (catLastRow >= 4) {
+    var catData = catSheet.getRange(4, 1, catLastRow - 3, 3).getValues();
+    for (var i = 0; i < catData.length; i++) {
+      if (catData[i][0]) {
+        catGroupMap[catData[i][0]] = catData[i][2] || 'Other';
+      }
+    }
+  }
+  
+  // Get current month
+  var now = new Date();
+  var currentMonth = now.getMonth();
+  var currentYear = now.getFullYear();
+  
+  // Sum expenses by category group for current month
+  var groupTotals = {};
+  var groups = ['Housing', 'Food & Drink', 'Transport', 'Business', 'Lifestyle', 'Health', 'Financial', 'Other'];
+  groups.forEach(function(g) { groupTotals[g] = 0; });
+  
+  // Also track per-account income and expenses
+  var accountIncome = {};
+  var accountExpenses = {};
+  
+  for (var j = 0; j < txData.length; j++) {
+    var date = txData[j][0];
+    if (!date) continue;
+    if (!(date instanceof Date)) date = new Date(date);
+    
+    if (date.getMonth() !== currentMonth || date.getFullYear() !== currentYear) continue;
+    
+    var category = txData[j][3];
+    var amountCZK = Math.abs(txData[j][7] || 0);
+    var type = txData[j][8];
+    var account = txData[j][2];
+    
+    if (type === 'Expense' && category) {
+      var group = catGroupMap[category] || 'Other';
+      if (!groupTotals[group]) groupTotals[group] = 0;
+      groupTotals[group] += amountCZK;
+    }
+    
+    // Per account tracking
+    if (account) {
+      if (type === 'Income') {
+        accountIncome[account] = (accountIncome[account] || 0) + amountCZK;
+      } else if (type === 'Expense') {
+        accountExpenses[account] = (accountExpenses[account] || 0) + amountCZK;
+      }
+    }
+  }
+  
+  // Write actual expenses to Burn Rate (column C, rows 13-20)
+  for (var g = 0; g < groups.length; g++) {
+    burnSheet.getRange(13 + g, 3).setValue(Math.round(groupTotals[groups[g]] || 0));
+  }
+  
+  // ---- DYNAMIC PER-ACCOUNT SECTION ----
+  // Find the "PER-ACCOUNT MONTHLY SUMMARY" header row by scanning column A
+  var accSheet = ss.getSheetByName('Accounts');
+  var accLastRow = accSheet.getLastRow();
+  var burnLastRow = burnSheet.getLastRow();
+  
+  var sectionHeaderRow = -1;
+  var burnColA = burnSheet.getRange(1, 1, burnLastRow, 1).getValues();
+  for (var s = 0; s < burnColA.length; s++) {
+    if (String(burnColA[s][0]).indexOf('PER-ACCOUNT') !== -1) {
+      sectionHeaderRow = s + 1; // 1-indexed
+      break;
+    }
+  }
+  
+  if (sectionHeaderRow === -1) {
+    // Section not found - create it after a gap below existing content
+    sectionHeaderRow = burnLastRow + 2;
+  }
+  
+  // Read all account names from Accounts tab (column A, starting row 4)
+  var allAccounts = [];
+  if (accLastRow >= 4) {
+    var accData = accSheet.getRange(4, 1, accLastRow - 3, 1).getValues();
+    for (var a = 0; a < accData.length; a++) {
+      if (accData[a][0] && String(accData[a][0]).trim() !== '') {
+        allAccounts.push(String(accData[a][0]).trim());
+      }
+    }
+  }
+  
+  // Column headers row is sectionHeaderRow + 1
+  var colHeaderRow = sectionHeaderRow + 1;
+  var dataStartRow = colHeaderRow + 1;
+  
+  // Clear old account data rows (from dataStartRow down to a generous range)
+  var clearEnd = dataStartRow + 30; // clear up to 30 old rows
+  if (clearEnd <= burnSheet.getMaxRows()) {
+    burnSheet.getRange(dataStartRow, 1, 30, 6).clearContent();
+  }
+  
+  // Write section header
+  burnSheet.getRange(sectionHeaderRow, 1).setValue('PER-ACCOUNT MONTHLY SUMMARY');
+  
+  // Write column headers
+  var accHeaders = ['Account', 'Income (CZK)', 'Expenses (CZK)', 'Net (CZK)', 'Notes'];
+  for (var h = 0; h < accHeaders.length; h++) {
+    burnSheet.getRange(colHeaderRow, h + 1).setValue(accHeaders[h]);
+  }
+  
+  // Write a row for each account with income, expenses, and net formula
+  for (var ac = 0; ac < allAccounts.length; ac++) {
+    var row = dataStartRow + ac;
+    var name = allAccounts[ac];
+    
+    burnSheet.getRange(row, 1).setValue(name);
+    burnSheet.getRange(row, 2).setValue(Math.round(accountIncome[name] || 0));
+    burnSheet.getRange(row, 3).setValue(Math.round(accountExpenses[name] || 0));
+    // Net = Income - Expenses as a live formula
+    burnSheet.getRange(row, 4).setFormula('=IF(AND(B' + row + '="",C' + row + '=""),"",B' + row + '-C' + row + ')');
+  }
+  
+  SpreadsheetApp.getUi().alert('Burn rate actuals updated for ' 
+    + Utilities.formatDate(now, 'UTC', 'MMMM yyyy') + '.\n'
+    + allAccounts.length + ' accounts processed.');
+}
+
+// ============================================================
+// RUN ALL UPDATES
+// ============================================================
+
+function runAllUpdates() {
+  fetchMissingExchangeRates();
+  updateBurnRateActuals();
+  updateMonthlySummary();
+  updateSpendPerCategory();
+  SpreadsheetApp.getUi().alert('All updates complete!');
+}
+
+// ============================================================
+// SPEND PER CATEGORY BREAKDOWN
+// ============================================================
+
+function updateSpendPerCategory() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var txSheet = ss.getSheetByName('Transactions');
+  var catSheet = ss.getSheetByName('Categories');
+  var lastRow = txSheet.getLastRow();
+  
+  if (lastRow < 5) {
+    SpreadsheetApp.getUi().alert('No transactions to analyze.');
+    return;
+  }
+  
+  // Build category -> group map
+  var catGroupMap = {};
+  var catLastRow = catSheet.getLastRow();
+  if (catLastRow >= 4) {
+    var catData = catSheet.getRange(4, 1, catLastRow - 3, 3).getValues();
+    for (var i = 0; i < catData.length; i++) {
+      if (catData[i][0]) {
+        catGroupMap[catData[i][0]] = catData[i][2] || 'Other';
+      }
+    }
+  }
+  
+  var txData = txSheet.getRange(5, 1, lastRow - 4, 12).getValues();
+  
+  // Collect all months and build: month -> category -> { amount, count, group, transactions[] }
+  var monthData = {};
+  var allMonths = [];
+  
+  for (var j = 0; j < txData.length; j++) {
+    var date = txData[j][0];
+    if (!date) continue;
+    if (!(date instanceof Date)) date = new Date(date);
+    
+    var type = txData[j][8];
+    if (type !== 'Expense') continue;
+    
+    var category = txData[j][3] || 'Uncategorized';
+    var amountCZK = Math.abs(txData[j][7] || 0);
+    var desc = txData[j][1] || '';
+    var account = txData[j][2] || '';
+    var amountOrig = txData[j][4] || 0;
+    var currency = txData[j][5] || '';
+    var monthKey = Utilities.formatDate(date, 'UTC', 'yyyy-MM');
+    
+    if (!monthData[monthKey]) {
+      monthData[monthKey] = {};
+      allMonths.push(monthKey);
+    }
+    
+    if (!monthData[monthKey][category]) {
+      monthData[monthKey][category] = {
+        amount: 0,
+        count: 0,
+        group: catGroupMap[category] || 'Other',
+        transactions: []
+      };
+    }
+    
+    monthData[monthKey][category].amount += amountCZK;
+    monthData[monthKey][category].count += 1;
+    monthData[monthKey][category].transactions.push({
+      date: Utilities.formatDate(date, 'UTC', 'yyyy-MM-dd'),
+      desc: desc,
+      account: account,
+      amountOrig: amountOrig,
+      currency: currency,
+      amountCZK: amountCZK
+    });
+  }
+  
+  allMonths.sort().reverse(); // Most recent first
+  
+  // Create or get the sheet
+  var spcSheet = ss.getSheetByName('Spend per Category');
+  if (!spcSheet) {
+    spcSheet = ss.insertSheet('Spend per Category');
+    spcSheet.setTabColor('E65100');
+  }
+  
+  // -- MONTH SELECTOR --
+  // Read existing selection BEFORE clearing (if sheet already existed)
+  var previousSelection = null;
+  if (spcSheet.getLastRow() >= 3) {
+    var rawVal = spcSheet.getRange(3, 2).getValue();
+    if (rawVal instanceof Date) {
+      previousSelection = Utilities.formatDate(rawVal, 'UTC', 'yyyy-MM');
+    } else if (rawVal && String(rawVal).trim() !== '') {
+      previousSelection = String(rawVal).trim();
+    }
+  }
+
+  // Now clear the sheet for rebuild
+  spcSheet.clear();
+  
+  // -- HEADER --
+  var row = 1;
+  spcSheet.getRange(row, 1).setValue('SPEND PER CATEGORY');
+  spcSheet.getRange(row, 1).setFontSize(14).setFontWeight('bold').setFontColor('#1B2A4A');
+  spcSheet.getRange(row, 1, 1, 8).merge();
+  row++;
+  
+  spcSheet.getRange(row, 1).setValue('Auto-generated from Transactions. Select a month from the dropdown in B3 to filter, or leave blank for all months.');
+  spcSheet.getRange(row, 1).setFontSize(9).setFontStyle('italic').setFontColor('#666666');
+  spcSheet.getRange(row, 1, 1, 8).merge();
+  row++;
+  
+  // Determine which month to show
+  var selectedMonth;
+  if (previousSelection && monthData[previousSelection]) {
+    selectedMonth = previousSelection;
+  } else {
+    selectedMonth = allMonths.length > 0 ? allMonths[0] : null;
+  }
+  
+  // Write month selector - force plain text format to stop Google Sheets converting to a Date
+  spcSheet.getRange(row, 1).setValue('Month:').setFontWeight('bold');
+  spcSheet.getRange(row, 2).setNumberFormat('@').setValue(selectedMonth || '');
+  spcSheet.getRange(row, 2).setFontColor('#0000FF').setBackground('#FFFDE7');
+  
+  // Add month dropdown validation
+  if (allMonths.length > 0) {
+    var dv = SpreadsheetApp.newDataValidation()
+      .requireValueInList(allMonths, true)
+      .setAllowInvalid(false)
+      .build();
+    spcSheet.getRange(row, 2).setDataValidation(dv);
+  }
+  
+  spcSheet.getRange(row, 3).setValue('(select month, then re-run "Update Spend per Category")');
+  spcSheet.getRange(row, 3).setFontSize(9).setFontStyle('italic').setFontColor('#999999');
+  row++;
+  
+  if (!selectedMonth || !monthData[selectedMonth]) {
+    spcSheet.getRange(row + 1, 1).setValue('No expense data found for selected month.');
+    SpreadsheetApp.getUi().alert('No expense data found.');
+    return;
+  }
+  
+  var data = monthData[selectedMonth];
+  row++;
+  
+  // -- SUMMARY TABLE --
+  row++;
+  spcSheet.getRange(row, 1).setValue('SUMMARY - ' + selectedMonth);
+  spcSheet.getRange(row, 1).setFontSize(12).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1B2A4A');
+  spcSheet.getRange(row, 1, 1, 7).merge();
+  for (var hc = 1; hc <= 7; hc++) spcSheet.getRange(row, hc).setBackground('#1B2A4A');
+  row++;
+  
+  var summaryHeaders = ['Category', 'Group', 'Total (CZK)', '# Transactions', 'Avg per Txn (CZK)', '% of Month Spend', 'Avg per Day (CZK)'];
+  for (var h = 0; h < summaryHeaders.length; h++) {
+    spcSheet.getRange(row, h + 1).setValue(summaryHeaders[h])
+      .setFontWeight('bold').setFontColor('#1B2A4A').setBackground('#E8EDF3');
+  }
+  row++;
+  
+  // Sort categories by total spend descending
+  var categories = Object.keys(data);
+  categories.sort(function(a, b) { return data[b].amount - data[a].amount; });
+  
+  var monthTotal = 0;
+  for (var c = 0; c < categories.length; c++) {
+    monthTotal += data[categories[c]].amount;
+  }
+  
+  // Days in selected month
+  var monthParts = selectedMonth.split('-');
+  var daysInMonth = new Date(parseInt(monthParts[0]), parseInt(monthParts[1]), 0).getDate();
+  
+  var summaryStartRow = row;
+  for (var c = 0; c < categories.length; c++) {
+    var catName = categories[c];
+    var cd = data[catName];
+    
+    spcSheet.getRange(row, 1).setValue(catName);
+    spcSheet.getRange(row, 2).setValue(cd.group);
+    spcSheet.getRange(row, 3).setValue(Math.round(cd.amount)).setNumberFormat('#,##0');
+    spcSheet.getRange(row, 4).setValue(cd.count);
+    spcSheet.getRange(row, 5).setValue(Math.round(cd.amount / cd.count)).setNumberFormat('#,##0');
+    spcSheet.getRange(row, 6).setValue(monthTotal > 0 ? cd.amount / monthTotal : 0).setNumberFormat('0.0%');
+    spcSheet.getRange(row, 7).setValue(Math.round(cd.amount / daysInMonth)).setNumberFormat('#,##0');
+    
+    // Alternate row shading
+    if (c % 2 === 1) {
+      spcSheet.getRange(row, 1, 1, 7).setBackground('#F5F7FA');
+    }
+    row++;
+  }
+  
+  // Total row
+  spcSheet.getRange(row, 1).setValue('TOTAL').setFontWeight('bold').setFontColor('#C62828');
+  spcSheet.getRange(row, 3).setValue(Math.round(monthTotal)).setNumberFormat('#,##0').setFontWeight('bold').setFontColor('#C62828');
+  spcSheet.getRange(row, 4).setValue('=SUM(D' + summaryStartRow + ':D' + (row - 1) + ')').setFontWeight('bold');
+  spcSheet.getRange(row, 6).setValue(1).setNumberFormat('0.0%').setFontWeight('bold');
+  spcSheet.getRange(row, 7).setValue(Math.round(monthTotal / daysInMonth)).setNumberFormat('#,##0').setFontWeight('bold');
+  for (var tc = 1; tc <= 7; tc++) {
+    spcSheet.getRange(row, tc).setBorder(true, null, true, null, null, null, '#C62828', SpreadsheetApp.BorderStyle.DOUBLE);
+  }
+  row += 2;
+  
+  // -- GROUP SUBTOTALS --
+  spcSheet.getRange(row, 1).setValue('BY GROUP - ' + selectedMonth);
+  spcSheet.getRange(row, 1).setFontSize(12).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#2E7D32');
+  spcSheet.getRange(row, 1, 1, 5).merge();
+  for (var gc = 1; gc <= 5; gc++) spcSheet.getRange(row, gc).setBackground('#2E7D32');
+  row++;
+  
+  var groupHeaders = ['Group', 'Total (CZK)', '# Categories', '% of Month Spend', 'Categories'];
+  for (var gh = 0; gh < groupHeaders.length; gh++) {
+    spcSheet.getRange(row, gh + 1).setValue(groupHeaders[gh])
+      .setFontWeight('bold').setFontColor('#1B2A4A').setBackground('#E8EDF3');
+  }
+  row++;
+  
+  // Aggregate by group
+  var groups = {};
+  for (var c2 = 0; c2 < categories.length; c2++) {
+    var cn = categories[c2];
+    var g = data[cn].group;
+    if (!groups[g]) {
+      groups[g] = { amount: 0, categories: [] };
+    }
+    groups[g].amount += data[cn].amount;
+    groups[g].categories.push(cn);
+  }
+  
+  var groupNames = Object.keys(groups);
+  groupNames.sort(function(a, b) { return groups[b].amount - groups[a].amount; });
+  
+  for (var gi = 0; gi < groupNames.length; gi++) {
+    var gn = groupNames[gi];
+    var gd = groups[gn];
+    
+    spcSheet.getRange(row, 1).setValue(gn);
+    spcSheet.getRange(row, 2).setValue(Math.round(gd.amount)).setNumberFormat('#,##0');
+    spcSheet.getRange(row, 3).setValue(gd.categories.length);
+    spcSheet.getRange(row, 4).setValue(monthTotal > 0 ? gd.amount / monthTotal : 0).setNumberFormat('0.0%');
+    spcSheet.getRange(row, 5).setValue(gd.categories.join(', '));
+    
+    if (gi % 2 === 1) {
+      spcSheet.getRange(row, 1, 1, 5).setBackground('#F5F7FA');
+    }
+    row++;
+  }
+  row += 2;
+  
+  // -- TRANSACTION DETAIL PER CATEGORY --
+  spcSheet.getRange(row, 1).setValue('TRANSACTION DETAIL - ' + selectedMonth);
+  spcSheet.getRange(row, 1).setFontSize(12).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#0277BD');
+  spcSheet.getRange(row, 1, 1, 7).merge();
+  for (var dc = 1; dc <= 7; dc++) spcSheet.getRange(row, dc).setBackground('#0277BD');
+  row++;
+  
+  for (var c3 = 0; c3 < categories.length; c3++) {
+    var catName3 = categories[c3];
+    var cd3 = data[catName3];
+    
+    // Category sub-header
+    spcSheet.getRange(row, 1).setValue(catName3 + ' (' + cd3.group + ') - ' + Math.round(cd3.amount).toLocaleString() + ' CZK');
+    spcSheet.getRange(row, 1).setFontWeight('bold').setFontColor('#1B2A4A').setBackground('#E8EDF3');
+    spcSheet.getRange(row, 1, 1, 7).merge();
+    for (var sc = 1; sc <= 7; sc++) spcSheet.getRange(row, sc).setBackground('#E8EDF3');
+    row++;
+    
+    // Detail headers
+    var detailHeaders = ['Date', 'Description', 'Account', 'Amount (Orig)', 'Currency', 'Amount (CZK)', '% of Category'];
+    for (var dh = 0; dh < detailHeaders.length; dh++) {
+      spcSheet.getRange(row, dh + 1).setValue(detailHeaders[dh])
+        .setFontWeight('bold').setFontSize(9).setFontColor('#666666');
+    }
+    row++;
+    
+    // Sort transactions by amount descending
+    cd3.transactions.sort(function(a, b) { return b.amountCZK - a.amountCZK; });
+    
+    for (var t = 0; t < cd3.transactions.length; t++) {
+      var tx = cd3.transactions[t];
+      spcSheet.getRange(row, 1).setValue(tx.date);
+      spcSheet.getRange(row, 2).setValue(tx.desc);
+      spcSheet.getRange(row, 3).setValue(tx.account);
+      spcSheet.getRange(row, 4).setValue(tx.amountOrig).setNumberFormat('#,##0.00');
+      spcSheet.getRange(row, 5).setValue(tx.currency);
+      spcSheet.getRange(row, 6).setValue(Math.round(tx.amountCZK)).setNumberFormat('#,##0');
+      spcSheet.getRange(row, 7).setValue(cd3.amount > 0 ? tx.amountCZK / cd3.amount : 0).setNumberFormat('0.0%');
+      
+      if (t % 2 === 1) {
+        spcSheet.getRange(row, 1, 1, 7).setBackground('#F5F7FA');
+      }
+      row++;
+    }
+    row++; // gap between categories
+  }
+  
+  // -- COLUMN WIDTHS --
+  spcSheet.setColumnWidth(1, 24);
+  spcSheet.setColumnWidth(2, 20);
+  spcSheet.setColumnWidth(3, 16);
+  spcSheet.setColumnWidth(4, 16);
+  spcSheet.setColumnWidth(5, 18);
+  spcSheet.setColumnWidth(6, 16);
+  spcSheet.setColumnWidth(7, 18);
+  
+  // Freeze top rows
+  spcSheet.setFrozenRows(4);
+  
+  SpreadsheetApp.getUi().alert(
+    'Spend per Category updated for ' + selectedMonth + '.\n\n'
+    + categories.length + ' categories, ' + monthTotal.toLocaleString() + ' CZK total spend.'
+  );
+}
+
+// ============================================================
+// CUSTOM FORMULA: =FX_RATE(from, to, date)
+// ============================================================
+// You can use this as a custom function in cells
+// Example: =FX_RATE("EUR", "CZK", A5)
+
+/**
+ * Get exchange rate for a currency pair on a specific date
+ * @param {string} from - Source currency
+ * @param {string} to - Target currency
+ * @param {Date} date - Date for the rate
+ * @return {number} Exchange rate
+ * @customfunction
+ */
+function FX_RATE(from, to, date) {
+  if (!from || !to || !date) return '';
+  if (from === to) return 1;
+  return getExchangeRate(from, to, new Date(date));
+}
