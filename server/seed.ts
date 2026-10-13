@@ -1,13 +1,12 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import xlsx from 'xlsx';
 import { db } from './db.js';
 
 // One-time migration: financial_tracker.xlsx -> SQLite.
-// Re-run with --force to wipe and re-import.
+// Re-run with --force to wipe and re-import. Pass a path to read a spreadsheet other than
+// ./financial_tracker.xlsx (which is gitignored: it holds real financial data).
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const XLSX_PATH = path.join(__dirname, '..', 'financial_tracker.xlsx');
+const XLSX_PATH = path.resolve(process.argv.slice(2).find((a) => a.endsWith('.xlsx')) ?? 'financial_tracker.xlsx');
 
 const force = process.argv.includes('--force');
 const existing = (db.prepare('SELECT COUNT(*) AS n FROM transactions').get() as any).n;

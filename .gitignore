@@ -11,3 +11,7 @@ financial_tracker.xlsx
 data/
 .env
 .env.*
+dist-electron/
+dist-release/
+test-results/
+playwright-report/

@@ -1,14 +1,65 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, '..', 'data');
+// FINANCE_DATA_DIR is set by the desktop app (its userData folder) and by tests (a temp dir).
+// Dev scripts run from the repo root, so the default is ./data.
+export const dataDir = path.resolve(process.env.FINANCE_DATA_DIR ?? 'data');
 fs.mkdirSync(dataDir, { recursive: true });
+export const dbPath = path.join(dataDir, 'finance.db');
 
-export const db = new Database(path.join(dataDir, 'finance.db'));
-db.pragma('journal_mode = WAL');
+// Rows come back as `unknown` (like better-sqlite3) so callers cast them to their own row types.
+export interface Statement {
+  run(...params: SQLInputValue[]): { changes: number | bigint; lastInsertRowid: number | bigint };
+  get(...params: SQLInputValue[]): unknown;
+  all(...params: SQLInputValue[]): unknown[];
+}
+
+// Thin better-sqlite3-style wrapper over the built-in node:sqlite, so there is no native module to
+// rebuild for Electron. Only the parts this app uses: prepare/exec/pragma/transaction/close.
+class Db {
+  private depth = 0;
+  constructor(readonly raw: DatabaseSync) {}
+
+  prepare(sql: string): Statement {
+    return this.raw.prepare(sql);
+  }
+
+  exec(sql: string) {
+    this.raw.exec(sql);
+  }
+
+  pragma(sql: string): unknown[] {
+    return this.raw.prepare(`PRAGMA ${sql}`).all();
+  }
+
+  // Savepoints instead of BEGIN so transactions nest, like better-sqlite3.
+  transaction<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+    return (...args: A) => {
+      const sp = `sp_${++this.depth}`;
+      this.raw.exec(`SAVEPOINT ${sp}`);
+      try {
+        const result = fn(...args);
+        this.raw.exec(`RELEASE ${sp}`);
+        return result;
+      } catch (err) {
+        this.raw.exec(`ROLLBACK TO ${sp}`);
+        this.raw.exec(`RELEASE ${sp}`);
+        throw err;
+      } finally {
+        this.depth--;
+      }
+    };
+  }
+
+  close() {
+    if (this.raw.isOpen) this.raw.close();
+  }
+}
+
+export type { SQLInputValue };
+export const db = new Db(new DatabaseSync(dbPath));
+db.exec('PRAGMA journal_mode = WAL');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS accounts (

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
-import { czk, num } from '../format';
+import { num } from '../format';
 import { Account, Category, ImportTemplate, TemplateConfig, COLUMN_ROLES, CURRENCIES } from '../types';
 import { Toast, TypeBadge, useToast } from '../components/ui';
 
@@ -49,7 +49,8 @@ export function parseDate(raw: string | undefined, mode: 'auto' | 'DMY' | 'MDY' 
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
   m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
   if (m) {
-    let [, a, b, y] = m;
+    const [, a, b] = m;
+    let y = m[3];
     if (y.length === 2) y = `20${y}`;
     let day: string, mon: string;
     if (mode === 'MDY') { mon = a; day = b; }

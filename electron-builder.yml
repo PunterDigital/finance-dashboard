@@ -1,0 +1,49 @@
+appId: com.punterdigital.financedashboard
+productName: Finance Dashboard
+copyright: Copyright © 2026 Punter Digital Limited
+
+directories:
+  output: dist-release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+# Releases are created by .github/workflows/release.yml (electron-builder runs with --publish never).
+publish: null
+
+win:
+  artifactName: Finance-Dashboard-Setup-${version}.${ext}
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # Never delete the user's finance database on uninstall.
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+  artifactName: Finance-Dashboard-${version}-universal.${ext}
+  category: public.app-category.finance
+  # No Developer ID: scripts/after-pack.cjs ad-hoc signs the bundle instead (Apple Silicon won't run an
+  # app with a broken signature). Hardened runtime needs a real identity.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+asar: true
+afterPack: scripts/after-pack.cjs
+
+# No native modules (SQLite is Node's built-in node:sqlite), so nothing to rebuild.
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false

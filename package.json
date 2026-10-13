@@ -1,37 +1,64 @@
 {
-  "name": "personal-finance",
-  "version": "1.0.0",
+  "name": "finance-dashboard",
+  "productName": "Finance Dashboard",
+  "version": "0.1.0",
+  "description": "Local-first personal finance dashboard: your data stays on your machine.",
+  "author": "Punter Digital Limited",
+  "license": "MIT",
   "private": true,
   "type": "module",
+  "main": "dist-electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PunterDigital/finance-dashboard.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx watch server/main.ts",
     "dev:client": "vite",
-    "build": "vite build",
+    "build": "npm run build:ui && npm run build:electron",
+    "build:ui": "vite build",
+    "build:electron": "esbuild electron/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/main.js --sourcemap",
+    "start": "npm run build && electron .",
     "seed": "tsx server/seed.ts",
-    "start": "tsx server/index.ts"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "package": "npm run build && electron-builder --publish never"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
-    "express": "^4.21.2",
-    "papaparse": "^5.5.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.0",
-    "recharts": "^2.15.1",
-    "xlsx": "^0.18.5"
+    "express": "^4.21.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.0",
     "@types/express": "^4.17.21",
-    "@types/node": "^22.13.0",
+    "@types/node": "^24.10.0",
     "@types/papaparse": "^5.3.15",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
+    "electron": "^44.7.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "papaparse": "^5.5.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0",
+    "recharts": "^2.15.1",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
-    "vite": "^6.2.0"
+    "typescript-eslint": "^8.71.2",
+    "vite": "^6.2.0",
+    "vitest": "^5.0.4",
+    "xlsx": "^0.18.5"
   }
 }
