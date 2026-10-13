@@ -27,7 +27,8 @@ export default function SpendPerCategory() {
 
   const toggle = (cat: string) => {
     const next = new Set(open);
-    next.has(cat) ? next.delete(cat) : next.add(cat);
+    if (next.has(cat)) next.delete(cat);
+    else next.add(cat);
     setOpen(next);
   };
 

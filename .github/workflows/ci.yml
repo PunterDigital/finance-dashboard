@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  package:
+    name: E2E + package (${{ matrix.os }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+            executable: dist-release/win-unpacked/Finance Dashboard.exe
+            artifacts: dist-release/*.exe
+          - os: macos-latest
+            target: --mac
+            executable: dist-release/mac-universal/Finance Dashboard.app/Contents/MacOS/Finance Dashboard
+            artifacts: dist-release/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: End-to-end (dev build)
+        run: npx playwright test
+      - name: Package
+        run: npx electron-builder ${{ matrix.target }} --publish never
+      - name: End-to-end (packaged app)
+        shell: bash
+        env:
+          FINANCE_E2E_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
+        run: npx playwright test
+      - name: Verify macOS signature
+        if: runner.os == 'macOS'
+        run: |
+          for app in dist-release/mac*/*.app; do
+            echo "== $app ($(lipo -archs "$app/Contents/MacOS/Finance Dashboard"))"
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: finance-dashboard-${{ runner.os }}
+          path: |
+            ${{ matrix.artifacts }}
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

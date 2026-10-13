@@ -1,16 +1,37 @@
-# Personal Finance Dashboard
+# Finance Dashboard
 
-A local web app replacing the Google Sheets tracker (`financial_tracker.xlsx`) and its Apps Script (`app_script.txt`). All data lives in a local SQLite database (`data/finance.db`); nothing leaves your machine except FX-rate lookups.
+A local-first personal finance dashboard for Windows and macOS. It replaces a Google Sheets tracker and its Apps Script (`app_script.txt`): transactions, CSV import from any bank, multi-currency FX conversion, burn rate, recurring payments and transfer matching. All data lives in a SQLite database on your own machine; nothing leaves it except FX-rate lookups.
 
-## Run it
+## Download
+
+Get the latest installer from the [downloads page](https://punterdigital.github.io/personal-apps/) or the [GitHub Releases](https://github.com/PunterDigital/finance-dashboard/releases). Builds are unsigned: on Windows click **More info → Run anyway** in SmartScreen; on macOS right-click the app and choose **Open** the first time.
+
+Your data lives in the app's data folder (**File → Open data folder**):
+
+- Windows: `%APPDATA%\Finance Dashboard\finance.db`
+- macOS: `~/Library/Application Support/Finance Dashboard/finance.db`
+
+**File → Back up database…** saves a single-file copy. **File → Import database…** replaces the current data with another `finance.db` (for example one from the dev setup below); the old database is kept next to it as `finance.db.bak-<timestamp>`.
+
+## Develop
+
+Requires Node 24+ (SQLite is Node's built-in `node:sqlite`; there are no native modules).
 
 ```bash
 npm install
-npm run seed      # one-time: imports financial_tracker.xlsx into SQLite
-npm run dev       # starts API (port 3178) + UI (port 5173, auto-shifts if taken)
+npm run seed      # optional, one-time: imports ./financial_tracker.xlsx (or a path you pass) into ./data
+npm run dev       # API on 127.0.0.1:3178 + Vite UI on 5173; data in ./data/finance.db
+npm start         # build and run the desktop app (data in the app's own folder)
 ```
 
-Re-seeding: `npm run seed -- --force` wipes transactions/accounts/categories/budgets and re-imports from the spreadsheet (saved import templates and the FX cache are kept).
+Re-seeding: `npm run seed -- --force` wipes transactions/accounts/categories/budgets and re-imports from the spreadsheet (saved import templates and the FX cache are kept). The spreadsheet and `data/` are gitignored: they hold real financial data and must never be committed.
+
+| Command | What |
+|---|---|
+| `npm run typecheck` / `npm run lint` | TypeScript and ESLint |
+| `npm test` | Unit + API tests (Vitest, each file on a throwaway database) |
+| `npm run build` then `npm run test:e2e` | Playwright E2E against the Electron app, isolated profile |
+| `npm run package` | Installer for the current OS in `dist-release/` |
 
 ## What's inside
 

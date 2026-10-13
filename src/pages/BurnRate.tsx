@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import { czk, num, pct, monthLabel, currentMonth } from '../format';
+import { czk, pct, monthLabel, currentMonth } from '../format';
 import { useChartTheme } from '../theme';
 import { CURRENCIES } from '../types';
 import { MonthPicker, StatTile, Toast, useToast } from '../components/ui';

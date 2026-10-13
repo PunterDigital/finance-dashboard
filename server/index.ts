@@ -1,11 +1,26 @@
 import express from 'express';
+import path from 'node:path';
+import type { Server } from 'node:http';
 import { db } from './db.js';
 import { getRate, getRateWithFallback, latestKnownRate } from './fx.js';
 import { detectRecurring } from './recurring.js';
 import { autoMatchTransfers, listTransfers, linkTransfers, unlinkTransfer, flipTransfer, setTransferRole, resetTransfers } from './transfers.js';
 import { listMonths, monthlySummary, spendPerCategory, burnRate, overview, accountBalances } from './reports.js';
 
-const app = express();
+export const app = express();
+app.disable('x-powered-by');
+
+// The API has no auth: it is only ever reachable on loopback. Rejecting foreign Host headers also
+// stops a web page from reading it through DNS rebinding.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+app.use((req, res, next) => {
+  const host = (req.headers.host ?? '').replace(/:\d+$/, '').toLowerCase();
+  if (!LOCAL_HOSTS.has(host)) {
+    res.status(403).json({ error: 'Forbidden host' });
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: '20mb' }));
 
 const asyncH =
@@ -271,5 +286,15 @@ app.post('/api/import', asyncH(async (req, res) => {
   res.json({ inserted, fxMissing });
 }));
 
-const PORT = 3178;
-app.listen(PORT, () => console.log(`Finance API listening on http://localhost:${PORT}`));
+// Serves the built UI (desktop app). Call after all /api routes are registered.
+export function serveStatic(dir: string) {
+  app.use(express.static(dir));
+  app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(dir, 'index.html')));
+}
+
+export function listen(port: number, host = '127.0.0.1'): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, host, () => resolve(server));
+    server.once('error', reject);
+  });
+}
