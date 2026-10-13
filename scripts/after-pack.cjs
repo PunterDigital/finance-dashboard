@@ -6,6 +6,9 @@ const path = require('node:path');
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  // Universal builds pack x64 and arm64 into "-temp" dirs, merge them, then run this hook again on the
+  // merged app. Signing the halves first gives them different CodeResources and the merge fails.
+  if (context.appOutDir.endsWith('-temp')) return;
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
 };
