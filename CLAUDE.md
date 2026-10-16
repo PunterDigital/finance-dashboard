@@ -23,7 +23,8 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `server/db.ts` | `node:sqlite` with a small better-sqlite3-style wrapper; schema + migrations |
 | `server/main.ts` | Dev API entry (`npm run dev:server`) |
 | `server/maintenance.ts` | Backup / validate / replace database (File menu) |
-| `server/seed.ts` | One-off import of the old Google Sheets workbook |
+| `server/seed.ts` | `npm run seed [file.xlsx] [--force]`: one-off import of the old Google Sheets workbook |
+| `server/workbook-import.ts` | The import itself (`importWorkbook`, `toDateStr`, `toAmount`); tested on a made-up workbook |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
 | `tests/unit` | Vitest (API tests start the real server on port 0) |
 | `tests/e2e` | Playwright `_electron` tests |
@@ -51,4 +52,8 @@ npm run package      # electron-builder for the current OS
 - macOS builds are universal and ad-hoc signed in `scripts/after-pack.cjs`; CI runs
   `codesign --verify --deep --strict`.
 - Label text includes a `<select>`'s options in Playwright, so select comboboxes by role + name.
+- `xlsx` (dev-only, for the seed) comes from SheetJS's own CDN tarball (`cdn.sheetjs.com`): the npm
+  package stopped at 0.18.5, which has high advisories. Dependabot can't update a URL dependency;
+  to upgrade, `npm i -D https://cdn.sheetjs.com/xlsx-<v>/xlsx-<v>.tgz`. Read files with
+  `xlsx.read(fs.readFileSync(p))`: the ESM build's `readFile` needs `set_fs` first.
 - FX rates come from frankfurter (no key). Use CZK in tests to avoid network calls.
