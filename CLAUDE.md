@@ -19,6 +19,7 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | Path | What |
 |---|---|
 | `src/` | React UI (Vite). Pages in `src/pages/`, API client `src/api.ts` |
+| `src/import-mapping.ts` | Guesses CSV column roles from headers (Type/Account/Category also check the values) |
 | `server/index.ts` | Express app (`app`, `serveStatic`, `listen`); routes under `/api` |
 | `server/db.ts` | `node:sqlite` with a small better-sqlite3-style wrapper; schema + migrations |
 | `server/main.ts` | Dev API entry (`npm run dev:server`) |
