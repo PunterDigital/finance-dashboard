@@ -5,6 +5,7 @@ import { api } from '../api';
 import { num } from '../format';
 import { Account, Category, ImportTemplate, TemplateConfig, COLUMN_ROLES, CURRENCIES } from '../types';
 import { Toast, TypeBadge, useToast } from '../components/ui';
+import { columnKeys, guessMapping } from '../import-mapping';
 
 // ---------- parsing helpers ----------
 
@@ -132,7 +133,10 @@ export default function ImportPage() {
         if (!rows.length) { showToast('File appears to be empty'); return; }
         setRawRows(rows);
         setFileName(file.name);
-        setConfig(defaultConfig());
+        const mapping = guessFor(rows);
+        setConfig({ ...defaultConfig(), mapping });
+        const n = Object.keys(mapping).length;
+        if (n) showToast(`Auto-mapped ${n} column${n === 1 ? '' : 's'}: check them before you preview`);
         setResult(null);
         setStep(1);
       },
@@ -140,14 +144,15 @@ export default function ImportPage() {
     });
   };
 
-  // Column keys: header text when present, positional otherwise
-  const colKeys = useMemo(() => {
-    if (!rawRows.length) return [];
-    const width = Math.max(...rawRows.slice(0, 50).map((r) => r.length));
-    return Array.from({ length: width }, (_, i) =>
-      config.hasHeader ? String(rawRows[0][i] ?? `Column ${i + 1}`).trim() || `Column ${i + 1}` : `__col_${i}`
-    );
-  }, [rawRows, config.hasHeader]);
+  // Header-based guesses; values are checked against the accounts and categories that exist.
+  const guessFor = (rows: string[][]) =>
+    guessMapping(columnKeys(rows, true), {
+      rows: rows.slice(1),
+      accounts: accounts.map((a) => a.name),
+      categories: categories.map((c) => c.name),
+    });
+
+  const colKeys = useMemo(() => columnKeys(rawRows, config.hasHeader), [rawRows, config.hasHeader]);
 
   const dataRows = useMemo(() => (config.hasHeader ? rawRows.slice(1) : rawRows), [rawRows, config.hasHeader]);
 
@@ -349,7 +354,7 @@ export default function ImportPage() {
             <div className="filters mt16">
               <label className="fld">
                 <span>First row is headers</span>
-                <select value={config.hasHeader ? 'yes' : 'no'} onChange={(e) => setConfig({ ...config, hasHeader: e.target.value === 'yes', mapping: {} })}>
+                <select value={config.hasHeader ? 'yes' : 'no'} onChange={(e) => setConfig({ ...config, hasHeader: e.target.value === 'yes', mapping: e.target.value === 'yes' ? guessFor(rawRows) : {} })}>
                   <option value="yes">Yes</option><option value="no">No</option>
                 </select>
               </label>
