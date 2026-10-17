@@ -58,6 +58,8 @@ npm run package      # electron-builder for the current OS
 - macOS builds are universal and ad-hoc signed in `scripts/after-pack.cjs`; CI runs
   `codesign --verify --deep --strict`.
 - Label text includes a `<select>`'s options in Playwright, so select comboboxes by role + name.
+  Row text does too: on Transfers every unpaired row's "Link with…" lists the other accounts, so
+  `filter({ hasText })` matches the wrong row. Filter by the account cell (`transfers.spec.ts`).
 - `xlsx` (dev-only, for the seed) comes from SheetJS's own CDN tarball (`cdn.sheetjs.com`): the npm
   package stopped at 0.18.5, which has high advisories. Dependabot can't update a URL dependency;
   to upgrade, `npm i -D https://cdn.sheetjs.com/xlsx-<v>/xlsx-<v>.tgz`. Read files with
