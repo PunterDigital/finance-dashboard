@@ -16,7 +16,8 @@ publish: null
 
 win:
   artifactName: Finance-Dashboard-Setup-${version}.${ext}
-  signAndEditExecutable: false
+  # No certificate: this only stamps the icon and version info into the .exe (rcedit), nothing is signed.
+  signAndEditExecutable: true
   target:
     - target: nsis
       arch: [x64]

@@ -22,4 +22,5 @@ export default tseslint.config(
     rules: { 'react-hooks/rules-of-hooks': 'error', 'react-hooks/exhaustive-deps': 'warn' },
   },
   { files: ['**/*.cjs'], languageOptions: { sourceType: 'commonjs', globals: globals.node }, rules: { '@typescript-eslint/no-require-imports': 'off' } },
+  { files: ['**/*.mjs'], languageOptions: { globals: globals.node } },
 );
