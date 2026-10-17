@@ -23,7 +23,7 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `server/index.ts` | Express app (`app`, `serveStatic`, `listen`); routes under `/api` |
 | `server/db.ts` | `node:sqlite` with a small better-sqlite3-style wrapper; schema + migrations |
 | `server/main.ts` | Dev API entry (`npm run dev:server`) |
-| `server/maintenance.ts` | Backup / validate / replace database (File menu) |
+| `server/maintenance.ts` | Backup / validate / replace / reset database (File menu; Settings page via `/api/maintenance/*`) |
 | `server/seed.ts` | `npm run seed [file.xlsx] [--force]`: one-off import of the old Google Sheets workbook |
 | `server/workbook-import.ts` | The import itself (`importWorkbook`, `toDateStr`, `toAmount`); tested on a made-up workbook |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
@@ -58,3 +58,7 @@ npm run package      # electron-builder for the current OS
   to upgrade, `npm i -D https://cdn.sheetjs.com/xlsx-<v>/xlsx-<v>.tgz`. Read files with
   `xlsx.read(fs.readFileSync(p))`: the ESM build's `readFile` needs `set_fs` first.
 - FX rates come from frankfurter (no key). Use CZK in tests to avoid network calls.
+- Settings → Back up database is a plain download (the app shows a save dialog). Playwright doesn't
+  surface Electron downloads as `download` events: in E2E, set the path with a `will-download`
+  handler via `app.evaluate`. Don't delete a file inside a `res.download` callback: on Windows the
+  stream still has it open (ENOTEMPTY crashed the main process); send a Buffer instead.

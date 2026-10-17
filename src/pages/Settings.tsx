@@ -9,6 +9,10 @@ export default function Settings() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [editAcc, setEditAcc] = useState<Partial<Account> | null>(null);
   const [editCat, setEditCat] = useState<Partial<Category> | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetText, setResetText] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetBackup, setResetBackup] = useState<string | null>(null);
   const [toast, showToast] = useToast();
 
   const load = useCallback(() => {
@@ -48,10 +52,25 @@ export default function Settings() {
     load();
   };
 
+  const resetDb = async () => {
+    setResetting(true);
+    try {
+      const { backup } = await api.post<{ backup: string }>('/api/maintenance/reset', { confirm: resetText });
+      setResetOpen(false);
+      setResetText('');
+      setResetBackup(backup);
+      load();
+    } catch (e: any) {
+      showToast(`Reset failed: ${e.message}`);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <>
       <div className="page-head">
-        <div><h2>Accounts &amp; Categories</h2><div className="sub">Renames propagate to existing transactions automatically</div></div>
+        <div><h2>Settings</h2><div className="sub">Accounts, categories and your database. Renames propagate to existing transactions automatically</div></div>
       </div>
 
       <div className="card">
@@ -105,6 +124,42 @@ export default function Settings() {
           </table>
         </div>
       </div>
+
+      <div className="card">
+        <h3>Database</h3>
+        <p className="small muted" style={{ marginTop: 0 }}>Everything is stored in one file on this computer.</p>
+        <div className="row">
+          <a className="btn" href="/api/maintenance/backup" download>Back up database</a>
+          <span className="small muted">Saves a copy you can restore with File → Import database…</span>
+        </div>
+        <div className="row mt16">
+          <button className="danger" onClick={() => { setResetText(''); setResetOpen(true); }}>Reset database…</button>
+          <span className="small muted">Deletes every transaction, account, category, template and budget.</span>
+        </div>
+        {resetBackup && (
+          <div className="callout mt16" role="status">
+            Database reset. Your previous data was kept as <span className="mono">{resetBackup}</span>
+          </div>
+        )}
+      </div>
+
+      {resetOpen && (
+        <Modal title="Reset database?" onClose={() => setResetOpen(false)}>
+          <p>
+            This deletes <b>all</b> your data and starts over with an empty database. A copy of the current database is
+            kept in the data folder first, so you can restore it with File → Import database….
+          </p>
+          <label className="fld full">Type RESET to confirm
+            <input value={resetText} autoFocus onChange={(e) => setResetText(e.target.value)} />
+          </label>
+          <div className="modal-actions">
+            <button onClick={() => setResetOpen(false)}>Cancel</button>
+            <button className="danger" disabled={resetText !== 'RESET' || resetting} onClick={resetDb}>
+              {resetting ? 'Resetting…' : 'Reset database'}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {editAcc && (
         <Modal title={editAcc.id ? 'Edit account' : 'Add account'} onClose={() => setEditAcc(null)}>

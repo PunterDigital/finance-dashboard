@@ -34,6 +34,10 @@ function createWindow() {
   win.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(baseUrl)) event.preventDefault();
   });
+  // Settings → Back up database is a download: ask where to save it, like File → Back up database….
+  win.webContents.session.on('will-download', (_event, item) => {
+    item.setSaveDialogOptions({ title: 'Back up database', filters: [{ name: 'SQLite database', extensions: ['db'] }] });
+  });
   win.on('closed', () => (win = null));
   void win.loadURL(baseUrl);
 }

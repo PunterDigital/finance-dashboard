@@ -47,3 +47,22 @@ export function replaceDatabase(src: string): string {
   }
   return backup;
 }
+
+// Empties every table, keeping the schema, so the app starts over as on a first install. The live
+// database is first kept as finance.db.bak-<timestamp> (returned), and the connection stays open.
+export function resetDatabase(): string {
+  const backup = `${dbPath}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  backupDatabase(backup);
+  const tables = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]
+  ).map((t) => t.name);
+  const hasSequence = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'").get();
+  db.transaction(() => {
+    for (const t of tables) db.exec(`DELETE FROM "${t.replaceAll('"', '""')}"`);
+    if (hasSequence) db.exec('DELETE FROM sqlite_sequence');
+  })();
+  // Drop the freed pages too, so the old rows don't linger in the file or its WAL.
+  db.exec('VACUUM');
+  db.pragma('wal_checkpoint(TRUNCATE)');
+  return backup;
+}
