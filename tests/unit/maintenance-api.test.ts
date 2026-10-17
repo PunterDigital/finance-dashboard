@@ -24,7 +24,8 @@ describe('settings: database backup and reset', () => {
     await seed();
     const res = await fetch(api.ctx.base + '/api/maintenance/backup');
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-disposition')).toMatch(/attachment; filename="finance-backup-\d{4}-\d{2}-\d{2}\.db"/);
+    // Express 5 only quotes the filename when it needs to.
+    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="?finance-backup-\d{4}-\d{2}-\d{2}\.db"?$/);
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'finance-dl-')), 'backup.db');
     fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
     expect(() => validateDatabase(file)).not.toThrow();
