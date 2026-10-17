@@ -61,6 +61,19 @@ jobs:
         env:
           FINANCE_E2E_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
         run: npx playwright test
+      - name: Verify app icon (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          ./scripts/check-win-icon.ps1 "dist-release/win-unpacked/Finance Dashboard.exe" "dist-release/Finance-Dashboard-Setup-$v.exe"
+      - name: Verify app icon (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app="dist-release/mac-universal/Finance Dashboard.app"
+          icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app/Contents/Info.plist")
+          echo "CFBundleIconFile=$icon"
+          cmp build/icon.icns "$app/Contents/Resources/${icon%.icns}.icns"
       - name: Verify macOS signature
         if: runner.os == 'macOS'
         run: |

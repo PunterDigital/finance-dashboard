@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Finance Dashboard app icon. Source for build/icon.{png,ico,icns}: run scripts/make-icons.mjs after editing. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b8cf0"/>
+      <stop offset="1" stop-color="#1c56b8"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS icon grid: 824 px tile with a 100 px margin. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <rect x="262" y="560" width="132" height="200" rx="28" opacity="0.72"/>
+    <rect x="446" y="440" width="132" height="320" rx="28" opacity="0.86"/>
+    <rect x="630" y="300" width="132" height="460" rx="28"/>
+  </g>
+</svg>

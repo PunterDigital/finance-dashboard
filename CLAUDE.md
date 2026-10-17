@@ -27,6 +27,7 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `server/seed.ts` | `npm run seed [file.xlsx] [--force]`: one-off import of the old Google Sheets workbook |
 | `server/workbook-import.ts` | The import itself (`importWorkbook`, `toDateStr`, `toAmount`); tested on a made-up workbook |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
+| `build/` | App icon: `icon.svg` source → `icon.png`/`.ico`/`.icns` (`scripts/make-icons.mjs`), electron-builder `buildResources` |
 | `tests/unit` | Vitest (API tests start the real server on port 0) |
 | `tests/e2e` | Playwright `_electron` tests |
 
@@ -50,6 +51,10 @@ npm run package      # electron-builder for the current OS
 - `db.transaction()` uses SAVEPOINTs so blocks nest, like better-sqlite3 did.
 - `dist-electron/main.js` is bundled with `--packages=external`; only `dependencies` (just Express)
   are packaged into the app. UI libraries are devDependencies because Vite bundles them.
+- App icon: edit `build/icon.svg`, then `npm i --no-save sharp png2icons && node scripts/make-icons.mjs` and
+  commit all four files. `win.signAndEditExecutable: true` is what stamps the icon into the `.exe` (rcedit,
+  no certificate needed); CI checks the exe/installer icon (`scripts/check-win-icon.ps1`) and the
+  macOS bundle's `.icns`.
 - macOS builds are universal and ad-hoc signed in `scripts/after-pack.cjs`; CI runs
   `codesign --verify --deep --strict`.
 - Label text includes a `<select>`'s options in Playwright, so select comboboxes by role + name.
