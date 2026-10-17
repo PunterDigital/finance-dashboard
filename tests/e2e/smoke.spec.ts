@@ -65,4 +65,12 @@ test('add an account, a category and a transaction, then see it reported', async
   await page.getByRole('link', { name: 'Monthly Report' }).click();
   await expect(page.locator('.recharts-bar-rectangle path').first()).toBeVisible();
   await expect(page.locator('.recharts-line-dot')).toHaveCount(1); // one month: a dot, no curve yet
+
+  // Hovering the month shows the custom tooltip with every series.
+  await page.locator('.recharts-bar-rectangle path').first().hover();
+  const tooltip = page.locator('.viz-tooltip');
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText('Expenses');
+  await expect(tooltip).toContainText('Net');
+  await expect(tooltip).toContainText('1,234');
 });
