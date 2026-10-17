@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { api } from '../api';
 import { num } from '../format';
 import { Account, Category, ImportTemplate, TemplateConfig, COLUMN_ROLES, CURRENCIES } from '../types';
