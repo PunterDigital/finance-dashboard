@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes } from 'react-router-dom';
+import { NavLink, Route, Routes } from 'react-router';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import MonthlyReport from './pages/MonthlyReport';

@@ -20,9 +20,17 @@ test('launches with an empty isolated database and every page renders', async ({
     ['Recurring', /Recurring/],
     ['Settings', 'Settings'],
   ] as const) {
-    await page.getByRole('link', { name: link, exact: true }).click();
+    const navLink = page.getByRole('link', { name: link, exact: true });
+    await navLink.click();
     await expect(page.getByRole('heading', { level: 2, name: heading }).first()).toBeVisible();
+    // The router marks only the current page in the sidebar.
+    await expect(navLink).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('nav a[aria-current="page"]')).toHaveCount(1);
   }
+
+  // Hash routing survives a reload.
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 2, name: 'Settings' })).toBeVisible();
 });
 
 test('add an account, a category and a transaction, then see it reported', async ({ page }) => {
