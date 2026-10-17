@@ -59,4 +59,10 @@ test('add an account, a category and a transaction, then see it reported', async
 
   await page.getByRole('link', { name: 'Dashboard' }).click();
   await expect(page.getByText('E2E Groceries').first()).toBeVisible();
+
+  // The charts draw bars, not just axes (Recharts drops children it can't identify as React elements).
+  await expect(page.locator('.recharts-bar-rectangle path').first()).toBeVisible();
+  await page.getByRole('link', { name: 'Monthly Report' }).click();
+  await expect(page.locator('.recharts-bar-rectangle path').first()).toBeVisible();
+  await expect(page.locator('.recharts-line-dot')).toHaveCount(1); // one month: a dot, no curve yet
 });
