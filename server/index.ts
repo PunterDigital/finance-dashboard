@@ -25,10 +25,15 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '20mb' }));
+// Express 5 leaves req.body undefined when a request has no JSON body; the handlers expect {} as in v4.
+app.use((req, _res, next) => {
+  req.body ??= {};
+  next();
+});
 
 const asyncH =
-  (fn: (req: express.Request, res: express.Response) => Promise<void> | void) =>
-  async (req: express.Request, res: express.Response) => {
+  (fn: (req: express.Request<Record<string, string>>, res: express.Response) => Promise<void> | void) =>
+  async (req: express.Request<Record<string, string>>, res: express.Response) => {
     try {
       await fn(req, res);
     } catch (err: any) {
