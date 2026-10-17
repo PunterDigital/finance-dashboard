@@ -18,7 +18,7 @@ test('launches with an empty isolated database and every page renders', async ({
     ['Spend per Category', /Spend per Category/],
     ['Burn Rate', /Burn Rate/],
     ['Recurring', /Recurring/],
-    ['Accounts & Categories', 'Accounts & Categories'],
+    ['Settings', 'Settings'],
   ] as const) {
     await page.getByRole('link', { name: link, exact: true }).click();
     await expect(page.getByRole('heading', { level: 2, name: heading }).first()).toBeVisible();
@@ -26,7 +26,7 @@ test('launches with an empty isolated database and every page renders', async ({
 });
 
 test('add an account, a category and a transaction, then see it reported', async ({ page }) => {
-  await page.getByRole('link', { name: 'Accounts & Categories' }).click();
+  await page.getByRole('link', { name: 'Settings' }).click();
 
   await page.getByRole('button', { name: '+ Add account' }).click();
   await page.getByLabel('Name').fill('E2E Current');

@@ -39,13 +39,13 @@ Re-seeding: `npm run seed -- --force` wipes transactions/accounts/categories/bud
 |---|---|---|
 | Dashboard | — | Monthly KPIs with vs-last-month deltas, income/expense trend, top categories, account flows, upcoming recurring |
 | Transactions | Transactions tab | Filter/search/paginate, add/edit/delete; FX rate auto-fetched per transaction date when left blank |
-| Import CSV | — (new) | Map any bank export's columns, save mappings as reusable templates, duplicate detection, per-date FX conversion |
+| Import CSV | — (new) | Columns auto-mapped from their headers (e.g. Wise exports), adjustable; save mappings as reusable templates, duplicate detection, per-date FX conversion |
 | Monthly Report | Monthly Summary tab | Same figures, recomputed live |
 | Spend per Category | Spend per Category tab | Month selector, group subtotals, drill-down to transactions |
 | Burn Rate | Burn Rate tab | Editable budgets per group + income sources, burn %, cash runway |
 | Recurring | Recurring tab + script | Detection ported from the Apps Script (fixed: no duplicate rows on re-run, keeps your active flags) |
 | Transfers | — (new) | Auto-matches the two sides of each internal transfer (cross-currency aware) and infers direction; review page to flip/link/unlink |
-| Accounts & Categories | Accounts/Categories tabs | CRUD; renames propagate to transactions |
+| Settings | Accounts/Categories tabs | Accounts and categories CRUD (renames propagate to transactions); back up or reset the database |
 
 ## Currency conversion
 

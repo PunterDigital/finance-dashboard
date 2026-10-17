@@ -7,7 +7,7 @@ TRANSFER-2,13-10-2026,"13-10-2026 09:00:00.000",1000.00,CZK,"E2E refund",,1000.0
 `;
 
 test('a Wise CSV is mapped automatically and imports without touching the dropdowns', async ({ page }) => {
-  await page.getByRole('link', { name: 'Accounts & Categories' }).click();
+  await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: '+ Add account' }).click();
   await page.getByLabel('Name').fill('E2E Wise');
   await page.getByRole('button', { name: 'Save', exact: true }).click();

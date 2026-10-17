@@ -27,7 +27,7 @@ export default function App() {
           <NavLink to="/burn-rate">Burn Rate</NavLink>
           <NavLink to="/recurring">Recurring</NavLink>
           <div className="nav-section">Manage</div>
-          <NavLink to="/settings">Accounts &amp; Categories</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
       </aside>
       <main className="main">

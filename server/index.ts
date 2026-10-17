@@ -1,7 +1,10 @@
 import express from 'express';
 import path from 'node:path';
 import type { Server } from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
 import { db } from './db.js';
+import { backupDatabase, resetDatabase } from './maintenance.js';
 import { getRate, getRateWithFallback, latestKnownRate } from './fx.js';
 import { detectRecurring } from './recurring.js';
 import { autoMatchTransfers, listTransfers, linkTransfers, unlinkTransfer, flipTransfer, setTransferRole, resetTransfers } from './transfers.js';
@@ -285,6 +288,37 @@ app.post('/api/import', asyncH(async (req, res) => {
   commit();
   res.json({ inserted, fxMissing });
 }));
+
+// ---------- database maintenance ----------
+// A consistent copy of the live database, as a file download. It is read into memory and the temp
+// copy deleted before sending: Windows can't delete a file that a response stream still has open.
+app.get('/api/maintenance/backup', (_req, res) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finance-backup-'));
+  let data: Buffer;
+  try {
+    const file = path.join(dir, 'finance.db');
+    backupDatabase(file);
+    data = fs.readFileSync(file);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  }
+  res.attachment(`finance-backup-${new Date().toISOString().slice(0, 10)}.db`);
+  res.type('application/vnd.sqlite3').send(data);
+});
+
+// Needs a JSON body (so a cross-site form can't send it) and a same-origin Origin, if there is one.
+app.post('/api/maintenance/reset', (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && origin !== `http://${req.headers.host}`) {
+    res.status(403).json({ error: 'Forbidden origin' });
+    return;
+  }
+  if (req.body?.confirm !== 'RESET') {
+    res.status(400).json({ error: 'Type RESET to confirm' });
+    return;
+  }
+  res.json({ backup: resetDatabase() });
+});
 
 // Serves the built UI (desktop app). Call after all /api routes are registered.
 export function serveStatic(dir: string) {
