@@ -11,23 +11,24 @@ import ImportPage from './pages/ImportPage';
 import Transfers from './pages/Transfers';
 import Settings from './pages/Settings';
 import Sort from './pages/Sort';
+import Categorise from './pages/Categorise';
 
-// Count of expenses not yet sorted into need/want, for the nav badge.
-function useUnsortedCount() {
+// Size of a review queue (`total` from its endpoint) for a nav badge, refreshed on navigation and `event`.
+function useQueueCount(url: string, event: string) {
   const [n, setN] = useState<number | null>(null);
   const { pathname } = useLocation();
   useEffect(() => {
-    const refresh = () =>
-      api.get<{ total: number }>('/api/necessity/queue?limit=1').then((d) => setN(d.total)).catch(() => {});
+    const refresh = () => api.get<{ total: number }>(url).then((d) => setN(d.total)).catch(() => {});
     refresh();
-    window.addEventListener('necessity-changed', refresh);
-    return () => window.removeEventListener('necessity-changed', refresh);
-  }, [pathname]);
+    window.addEventListener(event, refresh);
+    return () => window.removeEventListener(event, refresh);
+  }, [pathname, url, event]);
   return n;
 }
 
 export default function App() {
-  const unsorted = useUnsortedCount();
+  const unsorted = useQueueCount('/api/necessity/queue?limit=1', 'necessity-changed');
+  const uncategorised = useQueueCount('/api/category/queue?limit=1', 'category-changed');
   return (
     <div className="app">
       <aside className="sidebar">
@@ -40,6 +41,10 @@ export default function App() {
           <NavLink to="/sort">
             Sort need/want
             {unsorted ? <span className="nav-count" aria-label={`${unsorted} unsorted`}>{unsorted}</span> : null}
+          </NavLink>
+          <NavLink to="/categorise">
+            Assign categories
+            {uncategorised ? <span className="nav-count" aria-label={`${uncategorised} without a category`}>{uncategorised}</span> : null}
           </NavLink>
           <NavLink to="/transfers">Transfers</NavLink>
           <NavLink to="/import">Import CSV</NavLink>
@@ -58,6 +63,7 @@ export default function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/sort" element={<Sort />} />
+          <Route path="/categorise" element={<Categorise />} />
           <Route path="/transfers" element={<Transfers />} />
           <Route path="/monthly" element={<MonthlyReport />} />
           <Route path="/categories" element={<SpendPerCategory />} />

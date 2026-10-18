@@ -3,6 +3,7 @@ import { api } from '../api';
 import { czk, dateLabel, num, todayStr } from '../format';
 import { Account, Category, Necessity, Tx, CURRENCIES } from '../types';
 import { notifyNecessityChanged } from './Sort';
+import { notifyCategoryChanged } from './Categorise';
 import { Modal, MonthPicker, Toast, TypeBadge, useToast } from '../components/ui';
 
 const PAGE = 100;
@@ -75,6 +76,7 @@ export default function Transactions() {
       if (editing.id) await api.put(`/api/transactions/${editing.id}`, editing);
       else await api.post('/api/transactions', editing);
       setEditing(null);
+      notifyCategoryChanged();
       showToast('Saved — CZK amount converted at the daily rate');
       load();
     } catch (e: any) {
@@ -85,6 +87,7 @@ export default function Transactions() {
   const remove = async (t: Tx) => {
     if (!confirm(`Delete "${t.description}" (${t.amount} ${t.currency}) on ${t.date}?`)) return;
     await api.del(`/api/transactions/${t.id}`);
+    notifyCategoryChanged();
     load();
   };
 

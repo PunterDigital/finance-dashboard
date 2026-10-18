@@ -302,6 +302,17 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; co
 .sort-btn.want { background: var(--violet); border-color: var(--violet); color: #fff; }
 .sort-btn:hover { filter: brightness(1.08); }
 .sort-hint { text-align: center; }
+/* ---------- assign categories (#2892) ---------- */
+.cat-card { cursor: default; touch-action: auto; user-select: text; }
+.cat-type { position: absolute; top: 16px; right: 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.cat-type.income { color: var(--accent); }
+.cat-picker { width: min(420px, 100%); display: flex; flex-direction: column; gap: 8px; }
+.cat-picker input { width: 100%; box-sizing: border-box; }
+.cat-options { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.cat-option { display: flex; justify-content: space-between; gap: 12px; text-align: left; border-color: transparent; background: transparent; }
+.cat-option.active { border-color: var(--accent); background: var(--accent-soft); }
+.cat-option.add { color: var(--accent); font-weight: 600; }
+.cat-none { padding: 6px 2px; }
 .necessity-select { padding: 3px 6px; font-size: 12px; }
 .necessity-select.need { color: var(--accent); font-weight: 600; }
 .necessity-select.want { color: var(--violet); font-weight: 600; }
