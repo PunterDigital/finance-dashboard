@@ -143,6 +143,85 @@ app.get('/api/necessity/queue', (req, res) => {
   res.json({ total, rows });
 });
 
+// ---------- assign categories (#2892) ----------
+// Income and expenses without a category. Transfers don't use categories, so they never queue.
+const UNCATEGORISED = "type != 'Transfer' AND (category IS NULL OR trim(category) = '')";
+
+// Sets or clears (null) the category on one income or expense row. The category must exist and
+// be of the row's type, the same choice the Transactions editor offers.
+app.put('/api/transactions/:id/category', (req, res) => {
+  const value: unknown = req.body.category ?? null;
+  if (value !== null && typeof value !== 'string') {
+    res.status(400).json({ error: 'category must be a string or null' });
+    return;
+  }
+  const tx = db.prepare('SELECT type FROM transactions WHERE id=?').get(req.params.id) as { type: string } | undefined;
+  if (!tx) {
+    res.status(404).json({ error: 'Transaction not found' });
+    return;
+  }
+  if (value !== null) {
+    if (tx.type === 'Transfer') {
+      res.status(400).json({ error: 'Transfers have no category' });
+      return;
+    }
+    const cat = db.prepare('SELECT type FROM categories WHERE name=?').get(value) as { type: string } | undefined;
+    if (!cat) {
+      res.status(400).json({ error: `No category called "${value}"` });
+      return;
+    }
+    if (cat.type !== tx.type) {
+      res.status(400).json({ error: `"${value}" is a ${cat.type.toLowerCase()} category` });
+      return;
+    }
+  }
+  db.prepare('UPDATE transactions SET category=? WHERE id=?').run(value, req.params.id);
+  res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
+});
+
+// Uncategorised rows, newest first, each with `suggestion`: the category most often given to other
+// rows of the same type and description (null if none). `exclude` leaves out ones skipped this session.
+app.get('/api/category/queue', (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+  const exclude = String(req.query.exclude ?? '')
+    .split(',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+  const notIn = exclude.length ? `AND id NOT IN (${exclude.map(() => '?').join(',')})` : '';
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM transactions WHERE ${UNCATEGORISED}`).get() as any).n;
+  const rows = db
+    .prepare(`SELECT * FROM transactions WHERE ${UNCATEGORISED} ${notIn} ORDER BY date DESC, id DESC LIMIT ?`)
+    .all(...exclude, limit) as { description: string; type: string }[];
+  // Matched in JS, not SQL: SQLite's lower() only folds ASCII, and descriptions are often Czech.
+  const key = (type: string, description: string) => `${type}\u0000${description.trim().toLocaleLowerCase('cs')}`;
+  const best = new Map<string, { category: string; n: number; last: string }>();
+  const used = db
+    .prepare(
+      `SELECT t.type, t.description, t.category, COUNT(*) AS n, MAX(t.date) AS last
+         FROM transactions t JOIN categories c ON c.name = t.category AND c.type = t.type
+        WHERE trim(t.description) != '' GROUP BY t.type, t.description, t.category`
+    )
+    .all() as { type: string; description: string; category: string; n: number; last: string }[];
+  const tally = new Map<string, Map<string, { n: number; last: string }>>();
+  for (const u of used) {
+    const k = key(u.type, u.description);
+    const cats = tally.get(k) ?? new Map();
+    const c = cats.get(u.category) ?? { n: 0, last: '' };
+    cats.set(u.category, { n: c.n + u.n, last: u.last > c.last ? u.last : c.last });
+    tally.set(k, cats);
+  }
+  for (const [k, cats] of tally) {
+    for (const [category, c] of cats) {
+      const b = best.get(k);
+      if (!b || c.n > b.n || (c.n === b.n && c.last > b.last)) best.set(k, { category, ...c });
+    }
+  }
+  res.json({
+    total,
+    rows: rows.map((r) => ({ ...r, suggestion: best.get(key(r.type, r.description))?.category ?? null })),
+  });
+});
+
 app.get('/api/months', (_req, res) => res.json(listMonths()));
 
 // ---------- accounts / categories ----------
