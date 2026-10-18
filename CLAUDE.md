@@ -26,6 +26,7 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `server/maintenance.ts` | Backup / validate / replace / reset database (File menu; Settings page via `/api/maintenance/*`) |
 | `server/seed.ts` | `npm run seed [file.xlsx] [--force]`: one-off import of the old Google Sheets workbook |
 | `server/workbook-import.ts` | The import itself (`importWorkbook`, `toDateStr`, `toAmount`); tested on a made-up workbook |
+| `src/pages/Sort.tsx` | Need/want sorter (#2818): `transactions.necessity` (`need`/`want`/NULL, expenses only), `PUT /api/transactions/:id/necessity`, `GET /api/necessity/queue` |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
 | `build/` | App icon: `icon.svg` source → `icon.png`/`.ico`/`.icns` (`scripts/make-icons.mjs`), electron-builder `buildResources` |
 | `tests/unit` | Vitest (API tests start the real server on port 0) |
@@ -69,3 +70,6 @@ npm run package      # electron-builder for the current OS
   surface Electron downloads as `download` events: in E2E, set the path with a `will-download`
   handler via `app.evaluate`. Don't delete a file inside a `res.download` callback: on Windows the
   stream still has it open (ENOTEMPTY crashed the main process); send a Buffer instead.
+- The need/want sorter advances the card at once and saves in the background (a choice saved while the
+  next key press is handled would otherwise be dropped). Its handlers read state from refs; an undo waits
+  for its own save first. A non-Expense row never keeps a necessity (the full PUT clears it).

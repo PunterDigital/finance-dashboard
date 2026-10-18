@@ -36,6 +36,7 @@ export default function Dashboard() {
   const prev = data.previous;
   const trend = data.trend.map((t: any) => ({ ...t, label: monthLabel(t.month) }));
   const totalCash = data.balances.reduce((s: number, b: any) => s + b.balanceCzk, 0);
+  const nw = data.necessity;
 
   return (
     <>
@@ -96,6 +97,32 @@ export default function Dashboard() {
             <Link to="/categories">Full category breakdown →</Link>
           </div>
         </div>
+      </div>
+
+      <div className="card" data-testid="need-want">
+        <h3>Need vs want · {monthLabel(month)}</h3>
+        {nw.need + nw.want === 0 ? (
+          <div className="empty">
+            No sorted expenses this month.{' '}
+            {nw.unsortedCount > 0 && <Link to="/sort">Sort {nw.unsortedCount} expense{nw.unsortedCount === 1 ? '' : 's'} →</Link>}
+          </div>
+        ) : (
+          <>
+            <div className="split-bar" role="img" aria-label={`Need ${pct(nw.needShare)}, want ${pct(nw.wantShare)}`}>
+              <div className="split-need" style={{ width: `${nw.needShare * 100}%` }} />
+              <div className="split-want" style={{ width: `${nw.wantShare * 100}%` }} />
+            </div>
+            <div className="split-legend">
+              <span className="key"><span className="swatch split-need" /> Need <strong data-testid="need-total">{czk(nw.need)}</strong> <span className="muted">({pct(nw.needShare)})</span></span>
+              <span className="key"><span className="swatch split-want" /> Want <strong data-testid="want-total">{czk(nw.want)}</strong> <span className="muted">({pct(nw.wantShare)})</span></span>
+            </div>
+          </>
+        )}
+        {nw.unsortedCount > 0 && nw.need + nw.want > 0 && (
+          <div className="card-note">
+            {nw.unsortedCount} expense{nw.unsortedCount === 1 ? '' : 's'} ({czk(nw.unsorted)}) not sorted yet · <Link to="/sort">Sort them →</Link>
+          </div>
+        )}
       </div>
 
       <div className="grid cols-2">

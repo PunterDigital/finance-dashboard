@@ -54,7 +54,7 @@ async function computeCzk(row: { date: string; amount: number; currency: string;
 
 // ---------- transactions ----------
 app.get('/api/transactions', (req, res) => {
-  const { month, account, category, type, entity, search, limit = '200', offset = '0' } = req.query as Record<string, string>;
+  const { month, account, category, type, entity, search, necessity, limit = '200', offset = '0' } = req.query as Record<string, string>;
   const where: string[] = [];
   const params: any[] = [];
   if (month) { where.push('substr(date,1,7)=?'); params.push(month); }
@@ -63,6 +63,8 @@ app.get('/api/transactions', (req, res) => {
   if (type) { where.push('type=?'); params.push(type); }
   if (entity) { where.push('entity=?'); params.push(entity); }
   if (search) { where.push('(description LIKE ? OR notes LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+  if (necessity === 'need' || necessity === 'want') { where.push('necessity=?'); params.push(necessity); }
+  if (necessity === 'unsorted') where.push("necessity IS NULL AND type='Expense'");
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM transactions ${w}`).get(...params) as any).n;
   const sums = db.prepare(
@@ -95,6 +97,7 @@ app.put('/api/transactions/:id', asyncH(async (req, res) => {
   db.prepare(
     `UPDATE transactions SET date=?, description=?, account=?, category=?, amount=?, currency=?, fx_rate=?, amount_czk=?, type=?, entity=?, notes=?, recurring=? WHERE id=?`
   ).run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, req.params.id);
+  if ((t.type ?? 'Expense') !== 'Expense') db.prepare('UPDATE transactions SET necessity=NULL WHERE id=?').run(req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 }));
 
@@ -102,6 +105,42 @@ app.delete('/api/transactions/:id', (req, res) => {
   unlinkTransfer(Number(req.params.id));
   db.prepare('DELETE FROM transactions WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------- need / want (#2818) ----------
+// Sets or clears (null) the need/want choice on one expense.
+app.put('/api/transactions/:id/necessity', (req, res) => {
+  const value = req.body.necessity ?? null;
+  if (value !== null && value !== 'need' && value !== 'want') {
+    res.status(400).json({ error: 'necessity must be "need", "want" or null' });
+    return;
+  }
+  const tx = db.prepare('SELECT type FROM transactions WHERE id=?').get(req.params.id) as { type: string } | undefined;
+  if (!tx) {
+    res.status(404).json({ error: 'Transaction not found' });
+    return;
+  }
+  if (tx.type !== 'Expense' && value !== null) {
+    res.status(400).json({ error: 'Only expenses can be marked need or want' });
+    return;
+  }
+  db.prepare('UPDATE transactions SET necessity=? WHERE id=?').run(value, req.params.id);
+  res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
+});
+
+// Unsorted expenses, newest first. `exclude` (comma-separated ids) leaves out ones skipped this session.
+app.get('/api/necessity/queue', (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+  const exclude = String(req.query.exclude ?? '')
+    .split(',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+  const notIn = exclude.length ? `AND id NOT IN (${exclude.map(() => '?').join(',')})` : '';
+  const total = (db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE type='Expense' AND necessity IS NULL").get() as any).n;
+  const rows = db
+    .prepare(`SELECT * FROM transactions WHERE type='Expense' AND necessity IS NULL ${notIn} ORDER BY date DESC, id DESC LIMIT ?`)
+    .all(...exclude, limit);
+  res.json({ total, rows });
 });
 
 app.get('/api/months', (_req, res) => res.json(listMonths()));
