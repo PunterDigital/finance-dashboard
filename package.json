@@ -1,7 +1,7 @@
 {
   "name": "finance-dashboard",
   "productName": "Finance Dashboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first personal finance dashboard: your data stays on your machine.",
   "author": "Punter Digital Limited",
   "license": "MIT",
