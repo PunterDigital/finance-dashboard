@@ -151,3 +151,7 @@ if (!txCols.includes('transfer_role')) {
   // 'out' | 'in' | NULL (unresolved — excluded from balances until reviewed)
   db.exec("ALTER TABLE transactions ADD COLUMN transfer_role TEXT");
 }
+if (!txCols.includes('necessity')) {
+  // 'need' | 'want' | NULL (not sorted yet). Only expenses are sorted (#2818).
+  db.exec('ALTER TABLE transactions ADD COLUMN necessity TEXT');
+}

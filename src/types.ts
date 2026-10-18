@@ -12,7 +12,10 @@ export interface Tx {
   entity: string | null;
   notes: string | null;
   recurring: number;
+  necessity: Necessity | null;
 }
+
+export type Necessity = 'need' | 'want';
 
 export interface Account {
   id: number;

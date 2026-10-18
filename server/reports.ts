@@ -259,11 +259,33 @@ export function overview(month: string) {
   return {
     month,
     kpis: current,
+    necessity: necessitySplit(month),
     previous,
     trend: summary,
     topCategories,
     balances: accountBalances(),
     recent,
     upcoming: upcoming.map((u) => ({ ...u, overdue: u.next_expected < today })),
+  };
+}
+
+// Need vs want totals (CZK) for one month's expenses (#2818). Rows without a CZK amount are left out.
+export function necessitySplit(month: string) {
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(necessity,'unsorted') AS k, SUM(abs(amount_czk)) AS total, COUNT(*) AS n
+       FROM transactions
+       WHERE type='Expense' AND amount_czk IS NOT NULL AND substr(date,1,7)=?
+       GROUP BY k`
+    )
+    .all(month) as { k: 'need' | 'want' | 'unsorted'; total: number; n: number }[];
+  const pick = (k: string) => rows.find((r) => r.k === k) ?? { total: 0, n: 0 };
+  const need = pick('need'), want = pick('want'), unsorted = pick('unsorted');
+  const sorted = need.total + want.total;
+  return {
+    need: need.total, want: want.total, unsorted: unsorted.total,
+    needCount: need.n, wantCount: want.n, unsortedCount: unsorted.n,
+    needShare: sorted ? need.total / sorted : 0,
+    wantShare: sorted ? want.total / sorted : 0,
   };
 }
