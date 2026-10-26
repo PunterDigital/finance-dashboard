@@ -66,6 +66,14 @@ npm run package      # electron-builder for the current OS
   package stopped at 0.18.5, which has high advisories. Dependabot can't update a URL dependency;
   to upgrade, `npm i -D https://cdn.sheetjs.com/xlsx-<v>/xlsx-<v>.tgz`. Read files with
   `xlsx.read(fs.readFileSync(p))`: the ESM build's `readFile` needs `set_fs` first.
+- TypeScript stays on 6.x (#3272): TypeScript 7's npm package has no JS compiler API (its main export is a
+  version file), and typescript-eslint 8 refuses to load with it ("typescript-eslint does not support TS
+  7.0"; peer range `<6.1.0`, tracked in typescript-eslint#10940). `tsc` 7 itself typechecks the project
+  clean. Move when typescript-eslint's `typescript` peer range includes 7. TS 6 turns on
+  `noUncheckedSideEffectImports`, so `tsconfig.json` lists `vite/client` in `types` for `import './styles.css'`.
+- React Router 8 is ESM-only and needs React 19.2.7+ and Node 22.22+. The app only uses declarative
+  `HashRouter`/`Routes`/`NavLink`/`Link`/`useLocation` from `react-router`; the smoke E2E clicks every
+  sidebar route, so add new routes to its list.
 - FX rates come from frankfurter (no key). Use CZK in tests to avoid network calls.
 - Settings → Back up database is a plain download (the app shows a save dialog). Playwright doesn't
   surface Electron downloads as `download` events: in E2E, set the path with a `will-download`
