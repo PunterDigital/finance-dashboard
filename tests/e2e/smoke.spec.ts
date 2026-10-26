@@ -10,8 +10,12 @@ test('launches with an empty isolated database and every page renders', async ({
   // The API must only listen on loopback.
   expect(new URL(page.url()).hostname).toBe('127.0.0.1');
 
+  // Every route in the sidebar (src/App.tsx), so a router upgrade that breaks one fails here.
   for (const [link, heading] of [
+    ['Dashboard', 'Dashboard'],
     ['Transactions', 'Transactions'],
+    ['Sort need/want', /Sort/],
+    ['Assign categories', 'Assign categories'],
     ['Transfers', /Transfers/],
     ['Import CSV', /Import/],
     ['Monthly Report', /Monthly/],
@@ -67,9 +71,14 @@ test('add an account, a category and a transaction, then see it reported', async
   await expect(page.locator('.recharts-line-dot')).toHaveCount(1); // one month: a dot, no curve yet
 
   // Hovering the month shows the custom tooltip with every series.
-  await page.locator('.recharts-bar-rectangle path').first().hover();
+  // A hover that lands while the bars are still animating in shows nothing, and hovering the same spot
+  // again sends no new mouse move: leave the chart and come back until the tooltip shows (Windows CI flake).
   const tooltip = page.locator('.viz-tooltip');
-  await expect(tooltip).toBeVisible();
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await page.locator('.recharts-bar-rectangle path').first().hover();
+    await expect(tooltip).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   await expect(tooltip).toContainText('Expenses');
   await expect(tooltip).toContainText('Net');
   await expect(tooltip).toContainText('1,234');
