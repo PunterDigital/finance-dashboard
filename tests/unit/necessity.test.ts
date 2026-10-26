@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { startApi } from './helpers';
 
@@ -25,10 +27,54 @@ describe('need / want', () => {
     expect(q.body.rows[0].necessity).toBeNull();
   });
 
-  it('leaves out skipped ids but still counts them', async () => {
-    const q = await api.get(`/api/necessity/queue?exclude=${ids.groceries},${ids.cinema}`);
+  it('saves a skip in the database: the row leaves the queue but is still counted (#3344)', async () => {
+    const res = await api.put(`/api/transactions/${ids.groceries}/necessity-skip`, { skipped: true });
+    expect(res.status).toBe(200);
+    expect(res.body.necessity_skipped).toBe(1);
+    await api.put(`/api/transactions/${ids.cinema}/necessity-skip`, { skipped: true });
+    const q = await api.get('/api/necessity/queue');
     expect(q.body.rows.map((r: any) => r.description)).toEqual(['Rent']);
-    expect(q.body.total).toBe(3);
+    expect(q.body).toMatchObject({ total: 3, skipped: 2 });
+
+    // On disk, so a restart (a new connection to the same file) still sees it.
+    const file = new DatabaseSync(path.join(process.env.FINANCE_DATA_DIR!, 'finance.db'));
+    const skipped = file.prepare('SELECT description FROM transactions WHERE necessity_skipped = 1 ORDER BY id').all();
+    file.close();
+    expect(skipped.map((r: any) => r.description)).toEqual(['Cinema', 'Groceries']);
+  });
+
+  it('un-skips one row, and "Review skipped" clears every skip', async () => {
+    await api.put(`/api/transactions/${ids.cinema}/necessity-skip`, { skipped: false });
+    let q = await api.get('/api/necessity/queue');
+    expect(q.body.rows.map((r: any) => r.description)).toEqual(['Cinema', 'Rent']);
+    expect(q.body.skipped).toBe(1);
+
+    await api.put(`/api/transactions/${ids.cinema}/necessity-skip`, { skipped: true });
+    const cleared = await api.post('/api/necessity/skips/clear');
+    expect(cleared.body).toEqual({ cleared: 2 });
+    q = await api.get('/api/necessity/queue');
+    expect(q.body.rows.map((r: any) => r.description)).toEqual(['Groceries', 'Cinema', 'Rent']);
+    expect(q.body).toMatchObject({ total: 3, skipped: 0 });
+  });
+
+  it('choosing need or want clears the skip, and an undo leaves the row unskipped', async () => {
+    await api.put(`/api/transactions/${ids.rent}/necessity-skip`, { skipped: true });
+    const chosen = await api.put(`/api/transactions/${ids.rent}/necessity`, { necessity: 'need' });
+    expect(chosen.body).toMatchObject({ necessity: 'need', necessity_skipped: 0 });
+    const undone = await api.put(`/api/transactions/${ids.rent}/necessity`, { necessity: null });
+    expect(undone.body).toMatchObject({ necessity: null, necessity_skipped: 0 });
+    const q = await api.get('/api/necessity/queue');
+    expect(q.body.rows.map((r: any) => r.description)).toEqual(['Groceries', 'Cinema', 'Rent']);
+    expect(q.body.skipped).toBe(0);
+  });
+
+  it('refuses bad skip values, missing rows and non-expenses', async () => {
+    expect((await api.put(`/api/transactions/${ids.rent}/necessity-skip`, { skipped: 'yes' })).status).toBe(400);
+    expect((await api.put(`/api/transactions/${ids.rent}/necessity-skip`, {})).status).toBe(400);
+    expect((await api.put('/api/transactions/999999/necessity-skip', { skipped: true })).status).toBe(404);
+    expect((await api.put(`/api/transactions/${ids.salary}/necessity-skip`, { skipped: true })).status).toBe(400);
+    expect((await api.put(`/api/transactions/${ids.transfer}/necessity-skip`, { skipped: true })).status).toBe(400);
+    expect((await api.get('/api/necessity/queue')).body).toMatchObject({ total: 3, skipped: 0 });
   });
 
   it('marks expenses need or want and drops them from the queue', async () => {

@@ -97,7 +97,9 @@ app.put('/api/transactions/:id', asyncH(async (req, res) => {
   db.prepare(
     `UPDATE transactions SET date=?, description=?, account=?, category=?, amount=?, currency=?, fx_rate=?, amount_czk=?, type=?, entity=?, notes=?, recurring=? WHERE id=?`
   ).run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, req.params.id);
-  if ((t.type ?? 'Expense') !== 'Expense') db.prepare('UPDATE transactions SET necessity=NULL WHERE id=?').run(req.params.id);
+  if ((t.type ?? 'Expense') !== 'Expense') db.prepare('UPDATE transactions SET necessity=NULL, necessity_skipped=0 WHERE id=?').run(req.params.id);
+  // A category given in the editor settles a row skipped on the category picker.
+  if (typeof t.category === 'string' && t.category.trim()) db.prepare('UPDATE transactions SET category_skipped=0 WHERE id=?').run(req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 }));
 
@@ -124,23 +126,56 @@ app.put('/api/transactions/:id/necessity', (req, res) => {
     res.status(400).json({ error: 'Only expenses can be marked need or want' });
     return;
   }
-  db.prepare('UPDATE transactions SET necessity=? WHERE id=?').run(value, req.params.id);
+  // Choosing (or undoing a choice) settles the row, so it is no longer "skipped" (#3344).
+  db.prepare('UPDATE transactions SET necessity=?, necessity_skipped=0 WHERE id=?').run(value, req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 });
 
-// Unsorted expenses, newest first. `exclude` (comma-separated ids) leaves out ones skipped this session.
+// Validates the `{ skipped: boolean }` body of the skip endpoints; sends a 400 and returns null if bad.
+function skipFlag(req: express.Request, res: express.Response): 0 | 1 | null {
+  if (typeof req.body.skipped !== 'boolean') {
+    res.status(400).json({ error: 'skipped must be true or false' });
+    return null;
+  }
+  return req.body.skipped ? 1 : 0;
+}
+
+// Skips (or un-skips) an expense on the sorter. Saved, so it stays skipped after a restart (#3344).
+app.put('/api/transactions/:id/necessity-skip', (req, res) => {
+  const flag = skipFlag(req, res);
+  if (flag === null) return;
+  const tx = db.prepare('SELECT type FROM transactions WHERE id=?').get(req.params.id) as { type: string } | undefined;
+  if (!tx) {
+    res.status(404).json({ error: 'Transaction not found' });
+    return;
+  }
+  if (tx.type !== 'Expense' && flag) {
+    res.status(400).json({ error: 'Only expenses can be skipped on the need/want sorter' });
+    return;
+  }
+  db.prepare('UPDATE transactions SET necessity_skipped=? WHERE id=?').run(flag, req.params.id);
+  res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
+});
+
+// "Review skipped": every skipped expense goes back into the queue.
+app.post('/api/necessity/skips/clear', (_req, res) => {
+  const info = db.prepare('UPDATE transactions SET necessity_skipped=0 WHERE necessity_skipped != 0').run();
+  res.json({ cleared: Number(info.changes) });
+});
+
+const UNSORTED = "type='Expense' AND necessity IS NULL";
+
+// Unsorted expenses that aren't skipped, newest first. `total` counts every unsorted expense and
+// `skipped` the ones left out because they were skipped, so `total - skipped` is what's left to sort.
 app.get('/api/necessity/queue', (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
-  const exclude = String(req.query.exclude ?? '')
-    .split(',')
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n > 0);
-  const notIn = exclude.length ? `AND id NOT IN (${exclude.map(() => '?').join(',')})` : '';
-  const total = (db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE type='Expense' AND necessity IS NULL").get() as any).n;
+  const { total, skipped } = db
+    .prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(necessity_skipped != 0), 0) AS skipped FROM transactions WHERE ${UNSORTED}`)
+    .get() as { total: number; skipped: number };
   const rows = db
-    .prepare(`SELECT * FROM transactions WHERE type='Expense' AND necessity IS NULL ${notIn} ORDER BY date DESC, id DESC LIMIT ?`)
-    .all(...exclude, limit);
-  res.json({ total, rows });
+    .prepare(`SELECT * FROM transactions WHERE ${UNSORTED} AND necessity_skipped = 0 ORDER BY date DESC, id DESC LIMIT ?`)
+    .all(limit);
+  res.json({ total, skipped, rows });
 });
 
 // ---------- assign categories (#2892) ----------
@@ -175,23 +210,45 @@ app.put('/api/transactions/:id/category', (req, res) => {
       return;
     }
   }
-  db.prepare('UPDATE transactions SET category=? WHERE id=?').run(value, req.params.id);
+  // Assigning (or undoing) settles the row, so it is no longer "skipped" (#3344).
+  db.prepare('UPDATE transactions SET category=?, category_skipped=0 WHERE id=?').run(value, req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 });
 
-// Uncategorised rows, newest first, each with `suggestion`: the category most often given to other
-// rows of the same type and description (null if none). `exclude` leaves out ones skipped this session.
+// Skips (or un-skips) a row on the category picker. Saved, so it stays skipped after a restart (#3344).
+app.put('/api/transactions/:id/category-skip', (req, res) => {
+  const flag = skipFlag(req, res);
+  if (flag === null) return;
+  const tx = db.prepare('SELECT type FROM transactions WHERE id=?').get(req.params.id) as { type: string } | undefined;
+  if (!tx) {
+    res.status(404).json({ error: 'Transaction not found' });
+    return;
+  }
+  if (tx.type === 'Transfer' && flag) {
+    res.status(400).json({ error: 'Transfers have no category' });
+    return;
+  }
+  db.prepare('UPDATE transactions SET category_skipped=? WHERE id=?').run(flag, req.params.id);
+  res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
+});
+
+// "Review skipped": every skipped row goes back into the category queue.
+app.post('/api/category/skips/clear', (_req, res) => {
+  const info = db.prepare('UPDATE transactions SET category_skipped=0 WHERE category_skipped != 0').run();
+  res.json({ cleared: Number(info.changes) });
+});
+
+// Uncategorised rows that aren't skipped, newest first, each with `suggestion`: the category most
+// often given to other rows of the same type and description (null if none). `total` counts every
+// uncategorised row and `skipped` the ones left out because they were skipped.
 app.get('/api/category/queue', (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
-  const exclude = String(req.query.exclude ?? '')
-    .split(',')
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n > 0);
-  const notIn = exclude.length ? `AND id NOT IN (${exclude.map(() => '?').join(',')})` : '';
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM transactions WHERE ${UNCATEGORISED}`).get() as any).n;
+  const { total, skipped } = db
+    .prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(category_skipped != 0), 0) AS skipped FROM transactions WHERE ${UNCATEGORISED}`)
+    .get() as { total: number; skipped: number };
   const rows = db
-    .prepare(`SELECT * FROM transactions WHERE ${UNCATEGORISED} ${notIn} ORDER BY date DESC, id DESC LIMIT ?`)
-    .all(...exclude, limit) as { description: string; type: string }[];
+    .prepare(`SELECT * FROM transactions WHERE ${UNCATEGORISED} AND category_skipped = 0 ORDER BY date DESC, id DESC LIMIT ?`)
+    .all(limit) as { description: string; type: string }[];
   // Matched in JS, not SQL: SQLite's lower() only folds ASCII, and descriptions are often Czech.
   const key = (type: string, description: string) => `${type}\u0000${description.trim().toLocaleLowerCase('cs')}`;
   const best = new Map<string, { category: string; n: number; last: string }>();
@@ -218,6 +275,7 @@ app.get('/api/category/queue', (req, res) => {
   }
   res.json({
     total,
+    skipped,
     rows: rows.map((r) => ({ ...r, suggestion: best.get(key(r.type, r.description))?.category ?? null })),
   });
 });

@@ -19,7 +19,8 @@ export function notifyCategoryChanged() {
 
 // Assign categories (#2892): one uncategorised income or expense row at a time, newest first, with a
 // type-to-filter picker. Like the need/want sorter, a choice advances at once and saves in the
-// background, and the handlers read state from refs so fast key presses are never dropped.
+// background, and the handlers read state from refs so fast key presses are never dropped. Skips are
+// saved too (#3344), so a skipped row stays out of the queue after a restart until "Review skipped".
 export default function Categorise() {
   const [queue, setQueueState] = useState<QueuedTx[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -32,7 +33,8 @@ export default function Categorise() {
   const [error, setError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
   const queueRef = useRef<QueuedTx[]>([]);
-  const skippedRef = useRef<number[]>([]);
+  // Skip saves in flight (each settles true/false, never rejects).
+  const skipsRef = useRef<Promise<boolean>[]>([]);
   const historyRef = useRef<Done[]>([]);
   const loadingRef = useRef(false);
   const input = useRef<HTMLInputElement>(null);
@@ -51,17 +53,19 @@ export default function Categorise() {
     input.current?.focus();
   };
 
-  // Fetches the next batch, once every save in flight has landed (categorised rows drop out server-side).
+  // Fetches the next batch, once every choice and skip in flight has landed (categorised and skipped
+  // rows drop out server-side).
   const load = useCallback(async () => {
     loadingRef.current = true;
     setLoading(true);
     try {
-      await Promise.all(historyRef.current.map((d) => d.saved));
-      const d = await api.get<{ total: number; rows: QueuedTx[] }>(
-        `/api/category/queue?limit=100&exclude=${skippedRef.current.join(',')}`
-      );
+      const skips = skipsRef.current;
+      await Promise.all([...historyRef.current.map((d) => d.saved), ...skips]);
+      skipsRef.current = skipsRef.current.filter((p) => !skips.includes(p));
+      const d = await api.get<{ total: number; skipped: number; rows: QueuedTx[] }>('/api/category/queue?limit=100');
       setQueue(d.rows);
       setTotal(d.total);
+      setSkippedCount(d.skipped);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -137,11 +141,24 @@ export default function Categorise() {
   const skip = useCallback(() => {
     const tx = queueRef.current[0];
     if (!tx || loadingRef.current) return;
-    skippedRef.current = [...skippedRef.current, tx.id];
-    setSkippedCount(skippedRef.current.length);
+    const saved = api
+      .put(`/api/transactions/${tx.id}/category-skip`, { skipped: true })
+      .then(() => {
+        notifyCategoryChanged();
+        return true;
+      })
+      .catch((e: any) => {
+        // Put it back so it isn't silently lost from this session.
+        showToast(`Couldn't skip ${tx.description || 'transaction'}: ${e.message}`);
+        setSkippedCount((n) => n - 1);
+        setQueue([tx, ...queueRef.current]);
+        return false;
+      });
+    skipsRef.current = [...skipsRef.current, saved];
+    setSkippedCount((n) => n + 1);
     resetPicker();
     advance();
-  }, [advance]);
+  }, [advance, showToast]);
 
   const undo = useCallback(async () => {
     const last = historyRef.current[historyRef.current.length - 1];
@@ -161,9 +178,16 @@ export default function Categorise() {
     }
   }, [showToast]);
 
-  const reviewSkipped = () => {
-    skippedRef.current = [];
-    setSkippedCount(0);
+  // Clears every saved skip, then reloads the queue with those rows back in it.
+  const reviewSkipped = async () => {
+    try {
+      await Promise.all(skipsRef.current);
+      await api.post('/api/category/skips/clear');
+      notifyCategoryChanged();
+    } catch (e: any) {
+      showToast(`Couldn't bring the skipped ones back: ${e.message}`);
+      return;
+    }
     load();
   };
 

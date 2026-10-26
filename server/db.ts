@@ -155,3 +155,11 @@ if (!txCols.includes('necessity')) {
   // 'need' | 'want' | NULL (not sorted yet). Only expenses are sorted (#2818).
   db.exec('ALTER TABLE transactions ADD COLUMN necessity TEXT');
 }
+// 1 = skipped on the need/want sorter or the category picker; the queues leave those rows out until
+// "Review skipped" clears the flags (#3344). Making a choice clears the row's flag.
+if (!txCols.includes('necessity_skipped')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN necessity_skipped INTEGER NOT NULL DEFAULT 0');
+}
+if (!txCols.includes('category_skipped')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN category_skipped INTEGER NOT NULL DEFAULT 0');
+}

@@ -13,12 +13,14 @@ import Settings from './pages/Settings';
 import Sort from './pages/Sort';
 import Categorise from './pages/Categorise';
 
-// Size of a review queue (`total` from its endpoint) for a nav badge, refreshed on navigation and `event`.
+// What's left to do in a review queue, for a nav badge: rows still to go through, not counting the
+// ones skipped (#3344). Refreshed on navigation and `event`.
 function useQueueCount(url: string, event: string) {
   const [n, setN] = useState<number | null>(null);
   const { pathname } = useLocation();
   useEffect(() => {
-    const refresh = () => api.get<{ total: number }>(url).then((d) => setN(d.total)).catch(() => {});
+    const refresh = () =>
+      api.get<{ total: number; skipped: number }>(url).then((d) => setN(d.total - d.skipped)).catch(() => {});
     refresh();
     window.addEventListener(event, refresh);
     return () => window.removeEventListener(event, refresh);
