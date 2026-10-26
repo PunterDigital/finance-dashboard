@@ -46,7 +46,7 @@ npm run package      # electron-builder for the current OS
 
 ## Quirks
 
-- No native modules on purpose: `node:sqlite` ships with Node 24 and Electron 44. Don't add
+- No native modules on purpose: `node:sqlite` ships with Node 24 and Electron 45. Don't add
   better-sqlite3 back (it needs an Electron ABI rebuild).
 - `server/db.ts` opens the database on import, so set `FINANCE_DATA_DIR` before importing the server
   (Electron main imports it dynamically for that reason).
