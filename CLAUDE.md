@@ -29,6 +29,8 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `src/pages/Sort.tsx` | Need/want sorter (#2818): `transactions.necessity` (`need`/`want`/NULL, expenses only), `PUT /api/transactions/:id/necessity` (also clears the skip), `GET /api/necessity/queue` (`total` = every unsorted expense, `skipped` = how many of those are skipped, `rows` = unskipped only). Skips are saved (#3344): `transactions.necessity_skipped` (0/1), `PUT /api/transactions/:id/necessity-skip` `{ skipped }`, "Review skipped" = `POST /api/necessity/skips/clear` |
 | `src/pages/Categorise.tsx` | Assign categories (#2892): uncategorised income/expense rows (NULL or blank; transfers never), `PUT /api/transactions/:id/category` (must exist and match the row's type; also clears the skip), `GET /api/category/queue` (`total`/`skipped`/`rows` like the sorter's) with a `suggestion` per row (most-used category for the same description, matched in JS because SQLite's `lower()` is ASCII-only). Saved skips (#3344): `transactions.category_skipped` (0/1, also cleared when the editor gives the row a category), `PUT /api/transactions/:id/category-skip` `{ skipped }`, `POST /api/category/skips/clear` |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
+| `electron/updater-core.ts`, `electron/updater.ts` | App updates (#3353): logic (no Electron imports, `tests/unit/updater.test.ts`) and wiring. The UI reads it over the API (`server/updates.ts`, `/api/app/update`, `/check`, `/install`): the renderer has no preload. Bar: `src/components/UpdateBanner.tsx` |
+| `server/app-settings.ts` | App preferences outside the database: `app-settings.json` in the data dir (`checkForUpdates`, default on), `GET/PUT /api/app/settings` |
 | `build/` | App icon: `icon.svg` source → `icon.png`/`.ico`/`.icns` (`scripts/make-icons.mjs`), electron-builder `buildResources` |
 | `tests/unit` | Vitest (API tests start the real server on port 0) |
 | `tests/e2e` | Playwright `_electron` tests |
@@ -51,7 +53,7 @@ npm run package      # electron-builder for the current OS
 - `server/db.ts` opens the database on import, so set `FINANCE_DATA_DIR` before importing the server
   (Electron main imports it dynamically for that reason).
 - `db.transaction()` uses SAVEPOINTs so blocks nest, like better-sqlite3 did.
-- `dist-electron/main.js` is bundled with `--packages=external`; only `dependencies` (just Express)
+- `dist-electron/main.js` is bundled with `--packages=external`; only `dependencies` (Express, electron-updater)
   are packaged into the app. UI libraries are devDependencies because Vite bundles them.
 - App icon: edit `build/icon.svg`, then `npm i --no-save sharp png2icons && node scripts/make-icons.mjs` and
   commit all four files. `win.signAndEditExecutable: true` is what stamps the icon into the `.exe` (rcedit,
@@ -84,6 +86,24 @@ npm run package      # electron-builder for the current OS
   for its own save first. A non-Expense row never keeps a necessity (the full PUT clears it).
   Skips work the same way on both sorters (advance at once, save in the background); `load()` waits
   for in-flight skips as well as choices. The sidebar badges show `total - skipped` (what's left to do).
+- App updates (#3353, ported from Nexus SSH): Windows (`install`) uses electron-updater against GitHub Releases
+  (`latest.yml` + the `.exe.blockmap`, published by `release.yml`; `electron-builder.yml`'s `publish` block writes
+  `resources/app-update.yml` into the app), downloads in the background (`autoInstallOnAppQuit = false`) and
+  "Restart to update" runs `quitAndInstall(true, true)`. macOS (`notify`) reads the GitHub API's latest release
+  and "Download" opens the downloads page (an unsigned app can't self-update). Dev builds and E2E profiles are
+  `off`. First check 5 s after launch, then every 6 h, each one only if Settings → "Check for updates" is on.
+  `dist-electron/main.js` is ESM, so electron-updater is loaded lazily with `createRequire(import.meta.url)`
+  (an `import()` of it loses the `autoUpdater` getter in the packaged app, per Nexus).
+- Update env vars: `FINANCE_UPDATE_TEST_URL=<url>` = notify mode against a fake GitHub "latest release" JSON
+  (`tests/e2e/updates.spec.ts`); `FINANCE_UPDATE_IN_TEST_PROFILE=1` lets a packaged build with an E2E profile run
+  the real updater; `FINANCE_DISABLE_UPDATES=1` turns it all off.
+- Testing the real Windows updater: `npx electron-builder --win --publish never -c.extraMetadata.version=0.4.0
+  -c.directories.output=<scratch>` (`--dir` writes no `app-update.yml`, so build the NSIS target), launch
+  `win-unpacked` with `FINANCE_E2E_USER_DATA=<temp>` + `FINANCE_UPDATE_IN_TEST_PROFILE=1`, and read
+  `/api/app/update`. For a local feed, rewrite `resources/app-update.yml` to `provider: generic` + `url:` (a
+  `-c.publish.provider=generic` override fails electron-builder's schema) and serve `latest.yml` + the installer.
+  Never click "Restart to update". Afterwards delete only `%LOCALAPPDATA%/finance-dashboard-updater/pending`:
+  the folder's `installer.exe` belongs to the real install (NSIS keeps a copy there for differential updates).
 - E2E restarts: the `relaunch()` fixture (`tests/e2e/app.ts`) closes the app and starts it again on the
   same temp profile, returning the new window. Wait for background saves to land (poll the API) before
   calling it.

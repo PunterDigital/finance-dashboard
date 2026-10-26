@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, shell, type MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { createUpdater, startUpdateChecks } from './updater.js';
 
 // E2E tests point this at a temp dir so they never touch real data.
 if (process.env.FINANCE_E2E_USER_DATA) app.setPath('userData', process.env.FINANCE_E2E_USER_DATA);
@@ -16,6 +17,15 @@ async function startServer() {
   // Random loopback port: nothing else on the network can reach the API.
   const http = await server.listen(0);
   baseUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+}
+
+// One-click app updates (#3353). The UI reads the status over /api/app/update.
+async function startUpdates() {
+  const { setUpdateController } = await import('../server/updates.js');
+  const { readAppSettings } = await import('../server/app-settings.js');
+  const updater = createUpdater();
+  setUpdateController(updater);
+  startUpdateChecks(updater, () => readAppSettings().checkForUpdates);
 }
 
 function createWindow() {
@@ -136,5 +146,6 @@ if (!app.requestSingleInstanceLock()) {
     }
     buildMenu();
     createWindow();
+    startUpdates().catch((err) => console.error('[updater] not started:', err));
   });
 }

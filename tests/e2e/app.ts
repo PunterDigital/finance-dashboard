@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Launches the app on the given profile. Never point this at a real profile.
-async function launch(userData: string) {
+export async function launch(userData: string, extraEnv: Record<string, string> = {}) {
   const executablePath = process.env.FINANCE_E2E_EXECUTABLE;
   const app = await electron.launch({
     ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }),
-    env: { ...process.env, FINANCE_E2E_USER_DATA: userData } as Record<string, string>,
+    env: { ...process.env, FINANCE_E2E_USER_DATA: userData, ...extraEnv } as Record<string, string>,
   });
   let closed = false;
   app.on('close', () => (closed = true));
@@ -16,7 +16,7 @@ async function launch(userData: string) {
 }
 
 // Collects renderer errors, so a test fails on any console error.
-function watchErrors(page: Page, errors: string[]) {
+export function watchErrors(page: Page, errors: string[]) {
   page.on('pageerror', (err) => errors.push(err.message));
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(msg.text());

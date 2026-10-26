@@ -9,6 +9,8 @@ import { getRate, getRateWithFallback, latestKnownRate } from './fx.js';
 import { detectRecurring } from './recurring.js';
 import { autoMatchTransfers, listTransfers, linkTransfers, unlinkTransfer, flipTransfer, setTransferRole, resetTransfers } from './transfers.js';
 import { listMonths, monthlySummary, spendPerCategory, burnRate, overview, accountBalances } from './reports.js';
+import { readAppSettings, writeAppSettings } from './app-settings.js';
+import { getUpdateController } from './updates.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -41,6 +43,17 @@ const asyncH =
       res.status(500).json({ error: err?.message ?? 'Internal error' });
     }
   };
+
+// For requests that change something outside the data (reset, install an update): a cross-site page
+// can send a simple POST, but the browser always adds its Origin, so refuse any origin but our own.
+function sameOrigin(req: express.Request, res: express.Response): boolean {
+  const origin = req.headers.origin;
+  if (origin && origin !== `http://${req.headers.host}`) {
+    res.status(403).json({ error: 'Forbidden origin' });
+    return false;
+  }
+  return true;
+}
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
@@ -489,16 +502,43 @@ app.get('/api/maintenance/backup', (_req, res) => {
 
 // Needs a JSON body (so a cross-site form can't send it) and a same-origin Origin, if there is one.
 app.post('/api/maintenance/reset', (req, res) => {
-  const origin = req.headers.origin;
-  if (origin && origin !== `http://${req.headers.host}`) {
-    res.status(403).json({ error: 'Forbidden origin' });
-    return;
-  }
+  if (!sameOrigin(req, res)) return;
   if (req.body?.confirm !== 'RESET') {
     res.status(400).json({ error: 'Type RESET to confirm' });
     return;
   }
   res.json({ backup: resetDatabase() });
+});
+
+// ---------- app settings & updates (#3353) ----------
+app.get('/api/app/settings', (_req, res) => res.json(readAppSettings()));
+app.put('/api/app/settings', (req, res) => {
+  if (!sameOrigin(req, res)) return;
+  const { checkForUpdates } = req.body;
+  if (typeof checkForUpdates !== 'boolean') {
+    res.status(400).json({ error: 'checkForUpdates must be true or false' });
+    return;
+  }
+  res.json(writeAppSettings({ checkForUpdates }));
+});
+
+// The desktop shell registers the real updater (electron/updater.ts); otherwise updates are off.
+app.get('/api/app/update', (_req, res) => res.json(getUpdateController().getStatus()));
+app.post('/api/app/update/check', asyncH(async (req, res) => {
+  if (!sameOrigin(req, res)) return;
+  res.json(await getUpdateController().check());
+}));
+// "Restart to update": runs the downloaded installer and quits (electron-updater quits on the next tick,
+// after this response is sent).
+app.post('/api/app/update/install', (req, res) => {
+  if (!sameOrigin(req, res)) return;
+  try {
+    getUpdateController().install();
+  } catch (err) {
+    res.status(409).json({ error: (err as Error).message });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 // Serves the built UI (desktop app). Call after all /api routes are registered.

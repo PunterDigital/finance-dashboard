@@ -12,7 +12,12 @@ files:
   - package.json
 
 # Releases are created by .github/workflows/release.yml (electron-builder runs with --publish never).
-publish: null
+# This block only tells electron-updater where to look (#3353): it writes resources/app-update.yml into
+# the app and latest.yml (+ the installer's .blockmap) next to the installer, which the release uploads.
+publish:
+  provider: github
+  owner: PunterDigital
+  repo: finance-dashboard
 
 win:
   artifactName: Finance-Dashboard-Setup-${version}.${ext}
