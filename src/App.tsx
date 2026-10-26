@@ -12,6 +12,7 @@ import Transfers from './pages/Transfers';
 import Settings from './pages/Settings';
 import Sort from './pages/Sort';
 import Categorise from './pages/Categorise';
+import { APP_VERSION } from './version';
 
 // Size of a review queue (`total` from its endpoint) for a nav badge, refreshed on navigation and `event`.
 function useQueueCount(url: string, event: string) {
@@ -56,6 +57,7 @@ export default function App() {
           <div className="nav-section">Manage</div>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
+        <div className="sidebar-version" data-testid="app-version">v{APP_VERSION}</div>
       </aside>
       <main className="main">
         <Routes>

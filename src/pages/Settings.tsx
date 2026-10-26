@@ -3,6 +3,7 @@ import { api } from '../api';
 import { num } from '../format';
 import { Account, Category, CURRENCIES } from '../types';
 import { Modal, Toast, useToast } from '../components/ui';
+import { APP_VERSION } from '../version';
 
 export default function Settings() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -141,6 +142,11 @@ export default function Settings() {
             Database reset. Your previous data was kept as <span className="mono">{resetBackup}</span>
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <h3>About</h3>
+        <p className="small muted" style={{ margin: 0 }} data-testid="about-version">Finance Dashboard v{APP_VERSION}</p>
       </div>
 
       {resetOpen && (
