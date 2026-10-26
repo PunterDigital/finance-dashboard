@@ -63,20 +63,22 @@ export default function App() {
         <div className="sidebar-version" data-testid="app-version">v{APP_VERSION}</div>
       </aside>
       <main className="main">
-        <UpdateBanner />
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/transactions" element={<Transactions />} />
-          <Route path="/import" element={<ImportPage />} />
-          <Route path="/sort" element={<Sort />} />
-          <Route path="/categorise" element={<Categorise />} />
-          <Route path="/transfers" element={<Transfers />} />
-          <Route path="/monthly" element={<MonthlyReport />} />
-          <Route path="/categories" element={<SpendPerCategory />} />
-          <Route path="/burn-rate" element={<BurnRate />} />
-          <Route path="/recurring" element={<Recurring />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
+        <div className="main-inner">
+          <UpdateBanner />
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/transactions" element={<Transactions />} />
+            <Route path="/import" element={<ImportPage />} />
+            <Route path="/sort" element={<Sort />} />
+            <Route path="/categorise" element={<Categorise />} />
+            <Route path="/transfers" element={<Transfers />} />
+            <Route path="/monthly" element={<MonthlyReport />} />
+            <Route path="/categories" element={<SpendPerCategory />} />
+            <Route path="/burn-rate" element={<BurnRate />} />
+            <Route path="/recurring" element={<Recurring />} />
+            <Route path="/settings" element={<Settings />} />
+          </Routes>
+        </div>
       </main>
     </div>
   );

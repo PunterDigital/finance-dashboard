@@ -80,7 +80,9 @@ body {
 .sidebar nav a.active { background: var(--accent); color: #fff; }
 .sidebar .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 16px 10px 6px; }
 
-.main { flex: 1; padding: 24px 28px; max-width: 1280px; min-width: 0; }
+/* The page column is centred right of the sidebar and stops widening at 1760px (#3387). */
+.main { flex: 1; padding: 24px clamp(28px, 2.5vw, 56px); min-width: 0; }
+.main-inner { max-width: 1760px; margin: 0 auto; }
 
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-head h2 { margin: 0; font-size: 20px; }
@@ -304,6 +306,15 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; co
 .sort-btn.want { background: var(--violet); border-color: var(--violet); color: #fff; }
 .sort-btn:hover { filter: brightness(1.08); }
 .sort-hint { text-align: center; }
+/* Bigger card and buttons on wide windows (#3387). */
+@media (min-width: 1700px) {
+  .sort-card, .cat-picker { width: min(540px, 100%); }
+  .sort-card { padding: 34px 34px 26px; }
+  .sort-amount { font-size: 40px; }
+  .sort-desc { font-size: 20px; }
+  .sort-meta { font-size: 14px; }
+  .sort-btn { min-width: 136px; padding: 10px 18px; font-size: 15px; }
+}
 /* ---------- assign categories (#2892) ---------- */
 .cat-card { cursor: default; touch-action: auto; user-select: text; }
 .cat-type { position: absolute; top: 16px; right: 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
