@@ -12,6 +12,7 @@ import Transfers from './pages/Transfers';
 import Settings from './pages/Settings';
 import Sort from './pages/Sort';
 import Categorise from './pages/Categorise';
+import { APP_VERSION } from './version';
 
 // What's left to do in a review queue, for a nav badge: rows still to go through, not counting the
 // ones skipped (#3344). Refreshed on navigation and `event`.
@@ -58,6 +59,7 @@ export default function App() {
           <div className="nav-section">Manage</div>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
+        <div className="sidebar-version" data-testid="app-version">v{APP_VERSION}</div>
       </aside>
       <main className="main">
         <Routes>
