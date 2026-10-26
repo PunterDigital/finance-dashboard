@@ -42,9 +42,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ runner.os }}
+          # latest.yml + the .exe.blockmap are what electron-updater reads on Windows (#3353).
           path: |
             dist-release/*.exe
+            dist-release/*.exe.blockmap
             dist-release/*.dmg
+            dist-release/latest*.yml
           if-no-files-found: error
 
   publish:
@@ -57,11 +60,19 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      - name: Check the update feed matches the installer
+        run: |
+          ls -la out
+          v="${GITHUB_REF_NAME#v}"
+          for f in "Finance-Dashboard-Setup-$v.exe" "Finance-Dashboard-Setup-$v.exe.blockmap" "Finance-Dashboard-$v-universal.dmg" latest.yml; do
+            test -f "out/$f" || { echo "::error::Missing release asset $f"; exit 1; }
+          done
+          grep -qx "version: $v" out/latest.yml || { echo "::error::latest.yml is not version $v"; cat out/latest.yml; exit 1; }
+          grep -qx "path: Finance-Dashboard-Setup-$v.exe" out/latest.yml || { echo "::error::latest.yml points at the wrong file"; cat out/latest.yml; exit 1; }
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ls -la out
           gh release create "$GITHUB_REF_NAME" out/* \
             --title "Finance Dashboard ${GITHUB_REF_NAME}" \
             --generate-notes \

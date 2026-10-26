@@ -4,6 +4,18 @@ import { num } from '../format';
 import { Account, Category, CURRENCIES } from '../types';
 import { Modal, Toast, useToast } from '../components/ui';
 import { APP_VERSION } from '../version';
+import { announceUpdateStatus, type UpdateStatus } from '../updates';
+
+// What "Check now" found, in words (the banner offers the next step).
+function describeCheck(s: UpdateStatus): string {
+  switch (s.state) {
+    case 'up-to-date': return "You're on the latest version.";
+    case 'available': return s.mode === 'install' ? `Downloading v${s.version}…` : `Version ${s.version} is available.`;
+    case 'downloaded': return `Version ${s.version} is ready to install.`;
+    case 'error': return `Couldn't check for updates: ${s.message}`;
+    default: return s.mode === 'off' ? 'Update checks only run in the installed app.' : 'Checking…';
+  }
+}
 
 export default function Settings() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -15,12 +27,43 @@ export default function Settings() {
   const [resetting, setResetting] = useState(false);
   const [resetBackup, setResetBackup] = useState<string | null>(null);
   const [toast, showToast] = useToast();
+  const [checkForUpdates, setCheckForUpdates] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.get<Account[]>('/api/accounts').then(setAccounts);
     api.get<Category[]>('/api/categories').then(setCategories);
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.get<{ checkForUpdates: boolean }>('/api/app/settings').then((s) => setCheckForUpdates(s.checkForUpdates)).catch(() => {});
+  }, []);
+
+  const toggleUpdateChecks = async (on: boolean) => {
+    setCheckForUpdates(on);
+    try {
+      const saved = await api.put<{ checkForUpdates: boolean }>('/api/app/settings', { checkForUpdates: on });
+      setCheckForUpdates(saved.checkForUpdates);
+    } catch (e: any) {
+      setCheckForUpdates(!on);
+      showToast(`Save failed: ${e.message}`);
+    }
+  };
+
+  const checkNow = async () => {
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      const status = await api.post<UpdateStatus>('/api/app/update/check');
+      setCheckResult(describeCheck(status));
+      announceUpdateStatus(status);
+    } catch (e: any) {
+      setCheckResult(`Couldn't check for updates: ${e.message}`);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const saveAcc = async () => {
     if (!editAcc?.name?.trim()) { showToast('Account name is required'); return; }
@@ -147,6 +190,22 @@ export default function Settings() {
       <div className="card">
         <h3>About</h3>
         <p className="small muted" style={{ margin: 0 }} data-testid="about-version">Finance Dashboard v{APP_VERSION}</p>
+        <div className="row mt16">
+          <label className="row">
+            <input
+              type="checkbox"
+              checked={checkForUpdates ?? true}
+              disabled={checkForUpdates == null}
+              onChange={(e) => void toggleUpdateChecks(e.target.checked)}
+            />
+            Check for updates
+          </label>
+          <span className="small muted">When the app starts and every 6 hours. On Windows the update downloads in the background.</span>
+        </div>
+        <div className="row mt16">
+          <button onClick={checkNow} disabled={checking}>{checking ? 'Checking…' : 'Check now'}</button>
+          {checkResult && <span className="small" role="status">{checkResult}</span>}
+        </div>
       </div>
 
       {resetOpen && (

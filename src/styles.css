@@ -324,3 +324,8 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; co
 .split-legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
 .split-legend .key { display: inline-flex; align-items: center; gap: 6px; }
 .split-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+/* ---------- app update bar (#3353) ---------- */
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.update-banner .row { gap: 8px; }
+.update-error { color: var(--bad-text); }
