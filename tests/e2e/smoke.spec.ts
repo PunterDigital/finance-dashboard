@@ -7,6 +7,10 @@ test('launches with an empty isolated database and every page renders', async ({
   expect(await app.evaluate(({ app }) => app.getPath('userData'))).toBe(userData);
   expect(fs.existsSync(path.join(userData, 'finance.db'))).toBe(true);
 
+  // The sidebar shows the version of the app that is running (#3347).
+  const version = await app.evaluate(({ app }) => app.getVersion());
+  await expect(page.getByTestId('app-version')).toHaveText(`v${version}`);
+
   // The API must only listen on loopback.
   expect(new URL(page.url()).hostname).toBe('127.0.0.1');
 
@@ -35,6 +39,7 @@ test('launches with an empty isolated database and every page renders', async ({
   // Hash routing survives a reload.
   await page.reload();
   await expect(page.getByRole('heading', { level: 2, name: 'Settings' })).toBeVisible();
+  await expect(page.getByTestId('about-version')).toHaveText(`Finance Dashboard v${version}`);
 });
 
 test('add an account, a category and a transaction, then see it reported', async ({ page }) => {
