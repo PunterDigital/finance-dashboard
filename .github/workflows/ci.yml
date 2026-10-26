@@ -61,6 +61,17 @@ jobs:
         env:
           FINANCE_E2E_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
         run: npx playwright test
+      # electron-updater (#3353) reads resources/app-update.yml in the app and latest.yml from the release.
+      - name: Verify update feed (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          cat dist-release/latest.yml dist-release/win-unpacked/resources/app-update.yml
+          grep -qx "path: Finance-Dashboard-Setup-$v.exe" dist-release/latest.yml
+          test -f "dist-release/Finance-Dashboard-Setup-$v.exe.blockmap"
+          grep -qx "provider: github" dist-release/win-unpacked/resources/app-update.yml
+          grep -qx "repo: finance-dashboard" dist-release/win-unpacked/resources/app-update.yml
       - name: Verify app icon (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -143,6 +143,16 @@ describe('Updater: install mode (Windows)', () => {
     expect(logs.join('\n')).toMatch(/ERR_INTERNET_DISCONNECTED/);
   });
 
+  it('keeps only the first line of a multi-line HTTP error for the UI', async () => {
+    const { updater, logs } = makeUpdater({
+      loadInstaller: async () => {
+        throw new Error('Cannot find latest.yml (https://x/latest.yml): HttpError: 404 \n"headers": {\n  "server": "github.com"\n}');
+      },
+    });
+    expect(await updater.check()).toMatchObject({ state: 'error', message: 'Cannot find latest.yml (https://x/latest.yml): HttpError: 404' });
+    expect(logs.join('\n')).toMatch(/github\.com/);
+  });
+
   it('reports a failed download without an unhandled rejection', async () => {
     const { updater, installer } = makeUpdater();
     installer.next = 'download-fails';

@@ -6,6 +6,9 @@ A local-first personal finance dashboard for Windows and macOS. It replaces a Go
 
 Get the latest installer from the [downloads page](https://punterdigital.github.io/personal-apps/) or the [GitHub Releases](https://github.com/PunterDigital/finance-dashboard/releases). Builds are unsigned: on Windows click **More info → Run anyway** in SmartScreen; on macOS right-click the app and choose **Open** the first time.
 
+Updates (from v0.6.0): the Windows app downloads new versions in the background and offers **Restart to update**; the
+macOS app tells you when a new version is out and links to the downloads page. Turn it off in **Settings → Check for updates**.
+
 Your data lives in the app's data folder (**File → Open data folder**):
 
 - Windows: `%APPDATA%\Finance Dashboard\finance.db`

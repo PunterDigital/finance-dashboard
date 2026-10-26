@@ -139,8 +139,11 @@ export class Updater implements UpdateController {
   }
 
   private fail(err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
-    this.deps.log(`[updater] update check failed: ${message}`);
+    const full = err instanceof Error ? err.message : String(err);
+    this.deps.log(`[updater] update check failed: ${full}`);
+    // electron-updater's HTTP errors append the response headers on the following lines; the UI
+    // only needs the first one ("Cannot find latest.yml in the latest release artifacts (…): HttpError: 404").
+    const message = full.split('\n')[0].trim();
     // A failed background re-check must not hide an update that's already downloaded.
     if (this.status.state !== 'downloaded') this.status = { state: 'error', mode: this.deps.mode, message };
   }
