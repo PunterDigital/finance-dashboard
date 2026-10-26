@@ -87,3 +87,47 @@ test('sort expenses into need and want with keys, buttons and drags; totals foll
   const by = (d: string) => stored.find((t: any) => t.description === d).necessity;
   expect([by('Rent'), by('Groceries'), by('Cinema'), by('Streaming'), by('Salary')]).toEqual(['need', 'need', 'need', 'want', null]);
 });
+
+// #3344: a skip is saved, so after closing and reopening the app the skipped expense stays out of
+// the queue until "Review skipped".
+test('a skipped expense stays skipped after the app restarts', async ({ page, relaunch }) => {
+  const month = new Date().toISOString().slice(0, 7);
+  await page.evaluate(async (m) => {
+    const post = (url: string, body: unknown) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await post('/api/accounts', { name: 'E2E Current', type: 'Personal', base_currency: 'CZK' });
+    const tx = (day: string, description: string, amount: number) =>
+      post('/api/transactions', { date: `${m}-${day}`, description, account: 'E2E Current', amount, currency: 'CZK', type: 'Expense' });
+    await tx('01', 'Rent', -15000);
+    await tx('02', 'Cinema', -400);
+  }, month);
+  await page.reload();
+
+  await page.getByRole('navigation').getByRole('link', { name: /Sort need\/want/ }).click();
+  await expect(page.getByTestId('sort-card')).toContainText('Cinema');
+  await page.getByRole('button', { name: 'Skip' }).click();
+  await expect(page.getByTestId('sort-card')).toContainText('Rent');
+  await expect(page.getByTestId('sort-remaining')).toHaveText('2 unsorted expenses · 1 skipped');
+  // The skip saves in the background: let it land before closing the app.
+  await expect.poll(() => page.evaluate(async () => (await (await fetch('/api/necessity/queue')).json()).skipped)).toBe(1);
+
+  const after = await relaunch();
+  const navLink = after.getByRole('navigation').getByRole('link', { name: /Sort need\/want/ });
+  await expect(navLink).toContainText('1'); // the badge counts what's left to sort, not skips
+  await navLink.click();
+  const card = after.getByTestId('sort-card');
+  const remaining = after.getByTestId('sort-remaining');
+  await expect(card).toContainText('Rent');
+  await expect(remaining).toHaveText('2 unsorted expenses · 1 skipped');
+  await after.getByRole('button', { name: 'Need →' }).click();
+  await expect(after.getByTestId('sort-done')).toContainText('Everything else is sorted. 1 skipped.');
+  await expect(navLink).toHaveText('Sort need/want');
+
+  // Review skipped clears the saved skip: Cinema is back, and stays back.
+  await after.getByRole('button', { name: 'Review skipped' }).click();
+  await expect(card).toContainText('Cinema');
+  await expect(remaining).toHaveText('1 unsorted expense');
+  await expect(navLink).toContainText('1');
+  await after.keyboard.press('ArrowLeft');
+  await expect(after.getByTestId('sort-done')).toContainText('All expenses are sorted');
+});

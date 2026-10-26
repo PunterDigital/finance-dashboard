@@ -18,6 +18,8 @@ export function notifyNecessityChanged() {
 // Need-vs-want sorter (#2818): one unsorted expense at a time, newest first. Choices advance the
 // card at once and save in the background, so fast key presses are never dropped. State that the
 // handlers read lives in refs (mirrored into React state for rendering) for the same reason.
+// Skips are saved too (#3344), so a skipped expense stays out of the queue after a restart until
+// "Review skipped" clears them all.
 export default function Sort() {
   const [queue, setQueueState] = useState<Tx[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -28,7 +30,8 @@ export default function Sort() {
   const [error, setError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
   const queueRef = useRef<Tx[]>([]);
-  const skippedRef = useRef<number[]>([]);
+  // Skip saves in flight (each settles true/false, never rejects).
+  const skipsRef = useRef<Promise<boolean>[]>([]);
   const historyRef = useRef<Done[]>([]);
   const loadingRef = useRef(false);
   const drag = useRef<{ startX: number } | null>(null);
@@ -42,17 +45,19 @@ export default function Sort() {
     setHistoryCount(h.length);
   };
 
-  // Fetches the next batch, once every save in flight has landed (sorted rows drop out server-side).
+  // Fetches the next batch, once every choice and skip in flight has landed (sorted and skipped rows
+  // drop out server-side).
   const load = useCallback(async () => {
     loadingRef.current = true;
     setLoading(true);
     try {
-      await Promise.all(historyRef.current.map((d) => d.saved));
-      const d = await api.get<{ total: number; rows: Tx[] }>(
-        `/api/necessity/queue?limit=100&exclude=${skippedRef.current.join(',')}`
-      );
+      const skips = skipsRef.current;
+      await Promise.all([...historyRef.current.map((d) => d.saved), ...skips]);
+      skipsRef.current = skipsRef.current.filter((p) => !skips.includes(p));
+      const d = await api.get<{ total: number; skipped: number; rows: Tx[] }>('/api/necessity/queue?limit=100');
       setQueue(d.rows);
       setTotal(d.total);
+      setSkippedCount(d.skipped);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -97,10 +102,23 @@ export default function Sort() {
   const skip = useCallback(() => {
     const tx = queueRef.current[0];
     if (!tx || loadingRef.current) return;
-    skippedRef.current = [...skippedRef.current, tx.id];
-    setSkippedCount(skippedRef.current.length);
+    const saved = api
+      .put(`/api/transactions/${tx.id}/necessity-skip`, { skipped: true })
+      .then(() => {
+        notifyNecessityChanged();
+        return true;
+      })
+      .catch((e: any) => {
+        // Put it back so it isn't silently lost from this session.
+        showToast(`Couldn't skip ${tx.description || 'transaction'}: ${e.message}`);
+        setSkippedCount((n) => n - 1);
+        setQueue([tx, ...queueRef.current]);
+        return false;
+      });
+    skipsRef.current = [...skipsRef.current, saved];
+    setSkippedCount((n) => n + 1);
     advance();
-  }, [advance]);
+  }, [advance, showToast]);
 
   const undo = useCallback(async () => {
     const last = historyRef.current[historyRef.current.length - 1];
@@ -119,9 +137,16 @@ export default function Sort() {
     }
   }, [showToast]);
 
-  const reviewSkipped = () => {
-    skippedRef.current = [];
-    setSkippedCount(0);
+  // Clears every saved skip, then reloads the queue with those rows back in it.
+  const reviewSkipped = async () => {
+    try {
+      await Promise.all(skipsRef.current);
+      await api.post('/api/necessity/skips/clear');
+      notifyNecessityChanged();
+    } catch (e: any) {
+      showToast(`Couldn't bring the skipped ones back: ${e.message}`);
+      return;
+    }
     load();
   };
 

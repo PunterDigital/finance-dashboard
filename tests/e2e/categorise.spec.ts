@@ -85,3 +85,50 @@ test('assign categories one at a time: suggestion, filter, new category, skip an
   const cats = await page.evaluate(async () => (await (await fetch('/api/categories')).json()).map((c: any) => c.name));
   expect(cats).toContain('Utilities'); // added from the picker, kept after the undo
 });
+
+// #3344: a skip is saved, so after closing and reopening the app the skipped row stays out of the
+// queue until "Review skipped".
+test('a skipped transaction stays skipped after the app restarts', async ({ page, relaunch }) => {
+  const month = new Date().toISOString().slice(0, 7);
+  await page.evaluate(async (m) => {
+    const post = (url: string, body: unknown) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await post('/api/accounts', { name: 'E2E Current', type: 'Personal', base_currency: 'CZK' });
+    await post('/api/categories', { name: 'Rent', type: 'Expense', grp: 'Housing' });
+    await post('/api/categories', { name: 'Groceries', type: 'Expense', grp: 'Food' });
+    const tx = (day: string, description: string, amount: number) =>
+      post('/api/transactions', { date: `${m}-${day}`, description, account: 'E2E Current', amount, currency: 'CZK', type: 'Expense' });
+    await tx('01', 'Flat rent', -15000);
+    await tx('02', 'Mystery shop', -250);
+  }, month);
+  await page.reload();
+
+  await page.getByRole('navigation').getByRole('link', { name: /Assign categories/ }).click();
+  await expect(page.getByTestId('cat-card')).toContainText('Mystery shop');
+  await page.getByRole('button', { name: 'Skip' }).click();
+  await expect(page.getByTestId('cat-card')).toContainText('Flat rent');
+  await expect(page.getByTestId('cat-remaining')).toHaveText('2 transactions without a category · 1 skipped');
+  // The skip saves in the background: let it land before closing the app.
+  await expect.poll(() => page.evaluate(async () => (await (await fetch('/api/category/queue')).json()).skipped)).toBe(1);
+
+  const after = await relaunch();
+  const navLink = after.getByRole('navigation').getByRole('link', { name: /Assign categories/ });
+  await expect(navLink).toContainText('1'); // the badge counts what's left to do, not skips
+  await navLink.click();
+  const card = after.getByTestId('cat-card');
+  const remaining = after.getByTestId('cat-remaining');
+  const options = after.getByRole('listbox', { name: 'Categories' }).getByRole('option');
+  await expect(card).toContainText('Flat rent');
+  await expect(remaining).toHaveText('2 transactions without a category · 1 skipped');
+  await options.filter({ hasText: 'Rent' }).click();
+  await expect(after.getByTestId('cat-done')).toContainText('Everything else has a category. 1 skipped.');
+  await expect(navLink).toHaveText('Assign categories');
+
+  // Review skipped clears the saved skip: Mystery shop is back.
+  await after.getByRole('button', { name: 'Review skipped' }).click();
+  await expect(card).toContainText('Mystery shop');
+  await expect(remaining).toHaveText('1 transaction without a category');
+  await expect(navLink).toContainText('1');
+  await options.filter({ hasText: 'Groceries' }).click();
+  await expect(after.getByTestId('cat-done')).toContainText('Every transaction has a category');
+});

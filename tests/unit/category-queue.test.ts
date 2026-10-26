@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { startApi } from './helpers';
 
@@ -41,10 +43,49 @@ describe('assign categories', () => {
     expect(by('Salary')).toBeNull();
   });
 
-  it('leaves out skipped ids but still counts them', async () => {
-    const q = await api.get(`/api/category/queue?exclude=${ids.salary},${ids.kiosk},${ids.zabka}`);
+  it('saves a skip in the database: the row leaves the queue but is still counted (#3344)', async () => {
+    for (const key of ['salary', 'kiosk', 'zabka']) {
+      const res = await api.put(`/api/transactions/${ids[key]}/category-skip`, { skipped: true });
+      expect(res.status).toBe(200);
+      expect(res.body.category_skipped).toBe(1);
+    }
+    const q = await api.get('/api/category/queue');
     expect(q.body.rows.map((r: any) => r.description)).toEqual(['ALBERT']);
-    expect(q.body.total).toBe(4);
+    expect(q.body).toMatchObject({ total: 4, skipped: 3 });
+
+    // On disk, so a restart (a new connection to the same file) still sees it.
+    const file = new DatabaseSync(path.join(process.env.FINANCE_DATA_DIR!, 'finance.db'));
+    const skipped = file.prepare('SELECT description FROM transactions WHERE category_skipped = 1 ORDER BY date').all();
+    file.close();
+    expect(skipped.map((r: any) => r.description)).toEqual(['ŽABKA', 'Kiosk', 'Salary']);
+  });
+
+  it('"Review skipped" clears every skip', async () => {
+    const cleared = await api.post('/api/category/skips/clear');
+    expect(cleared.body).toEqual({ cleared: 3 });
+    const q = await api.get('/api/category/queue');
+    expect(q.body.rows.map((r: any) => r.description)).toEqual(['Salary', 'Kiosk', 'ALBERT', 'ŽABKA']);
+    expect(q.body).toMatchObject({ total: 4, skipped: 0 });
+  });
+
+  it('assigning a category clears the skip, in the picker and in the editor', async () => {
+    await api.put(`/api/transactions/${ids.albert}/category-skip`, { skipped: true });
+    const picked = await api.put(`/api/transactions/${ids.albert}/category`, { category: 'Groceries' });
+    expect(picked.body).toMatchObject({ category: 'Groceries', category_skipped: 0 });
+    await api.put(`/api/transactions/${ids.albert}/category`, { category: null });
+
+    const zabka = (await api.put(`/api/transactions/${ids.zabka}/category-skip`, { skipped: true })).body;
+    const edited = await api.put(`/api/transactions/${ids.zabka}`, { ...zabka, category: 'Eating out' });
+    expect(edited.body).toMatchObject({ category: 'Eating out', category_skipped: 0 });
+    await api.put(`/api/transactions/${ids.zabka}/category`, { category: null });
+
+    expect((await api.get('/api/category/queue')).body).toMatchObject({ total: 4, skipped: 0 });
+  });
+
+  it('refuses bad skip values, missing rows and transfers', async () => {
+    expect((await api.put(`/api/transactions/${ids.kiosk}/category-skip`, { skipped: 1 })).status).toBe(400);
+    expect((await api.put('/api/transactions/999999/category-skip', { skipped: true })).status).toBe(404);
+    expect((await api.put(`/api/transactions/${ids.transfer}/category-skip`, { skipped: true })).status).toBe(400);
   });
 
   it('assigns categories and drops the rows from the queue', async () => {

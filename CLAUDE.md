@@ -26,8 +26,8 @@ app for Windows and macOS. Repo: `PunterDigital/finance-dashboard` (public). Loc
 | `server/maintenance.ts` | Backup / validate / replace / reset database (File menu; Settings page via `/api/maintenance/*`) |
 | `server/seed.ts` | `npm run seed [file.xlsx] [--force]`: one-off import of the old Google Sheets workbook |
 | `server/workbook-import.ts` | The import itself (`importWorkbook`, `toDateStr`, `toAmount`); tested on a made-up workbook |
-| `src/pages/Sort.tsx` | Need/want sorter (#2818): `transactions.necessity` (`need`/`want`/NULL, expenses only), `PUT /api/transactions/:id/necessity`, `GET /api/necessity/queue` |
-| `src/pages/Categorise.tsx` | Assign categories (#2892): uncategorised income/expense rows (NULL or blank; transfers never), `PUT /api/transactions/:id/category` (must exist and match the row's type), `GET /api/category/queue` with a `suggestion` per row (most-used category for the same description, matched in JS because SQLite's `lower()` is ASCII-only) |
+| `src/pages/Sort.tsx` | Need/want sorter (#2818): `transactions.necessity` (`need`/`want`/NULL, expenses only), `PUT /api/transactions/:id/necessity` (also clears the skip), `GET /api/necessity/queue` (`total` = every unsorted expense, `skipped` = how many of those are skipped, `rows` = unskipped only). Skips are saved (#3344): `transactions.necessity_skipped` (0/1), `PUT /api/transactions/:id/necessity-skip` `{ skipped }`, "Review skipped" = `POST /api/necessity/skips/clear` |
+| `src/pages/Categorise.tsx` | Assign categories (#2892): uncategorised income/expense rows (NULL or blank; transfers never), `PUT /api/transactions/:id/category` (must exist and match the row's type; also clears the skip), `GET /api/category/queue` (`total`/`skipped`/`rows` like the sorter's) with a `suggestion` per row (most-used category for the same description, matched in JS because SQLite's `lower()` is ASCII-only). Saved skips (#3344): `transactions.category_skipped` (0/1, also cleared when the editor gives the row a category), `PUT /api/transactions/:id/category-skip` `{ skipped }`, `POST /api/category/skips/clear` |
 | `electron/main.ts` | Desktop shell: sets data dir, starts API on a random loopback port, loads UI |
 | `build/` | App icon: `icon.svg` source → `icon.png`/`.ico`/`.icns` (`scripts/make-icons.mjs`), electron-builder `buildResources` |
 | `tests/unit` | Vitest (API tests start the real server on port 0) |
@@ -82,3 +82,8 @@ npm run package      # electron-builder for the current OS
 - The need/want sorter advances the card at once and saves in the background (a choice saved while the
   next key press is handled would otherwise be dropped). Its handlers read state from refs; an undo waits
   for its own save first. A non-Expense row never keeps a necessity (the full PUT clears it).
+  Skips work the same way on both sorters (advance at once, save in the background); `load()` waits
+  for in-flight skips as well as choices. The sidebar badges show `total - skipped` (what's left to do).
+- E2E restarts: the `relaunch()` fixture (`tests/e2e/app.ts`) closes the app and starts it again on the
+  same temp profile, returning the new window. Wait for background saves to land (poll the API) before
+  calling it.
