@@ -15,7 +15,7 @@ import {
   RuleError, applyRules, createRule, editRule, getRule, listRules, parseDraft, previewRollback, previewSave,
   renameCategoryInRules, retireRule, rollbackRule,
 } from './rules.js';
-import { acceptSuggestion, addSuggestion, listSuggestions, pendingCount, rejectSuggestion, suggestFromRecurring, type SuggestionStatus } from './suggestions.js';
+import { acceptSuggestion, addSuggestion, listSuggestions, pendingCount, proposeRuleFor, rejectSuggestion, suggestFromRecurring, type SuggestionStatus } from './suggestions.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -104,6 +104,7 @@ app.post('/api/transactions', asyncH(async (req, res) => {
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, sourceOf(t.category));
+  if (sourceOf(t.category)) proposeRuleFor(Number(info.lastInsertRowid));
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(info.lastInsertRowid));
 }));
 
@@ -118,7 +119,10 @@ app.put('/api/transactions/:id', asyncH(async (req, res) => {
   ).run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, req.params.id);
   if ((t.type ?? 'Expense') !== 'Expense') db.prepare('UPDATE transactions SET necessity=NULL, necessity_skipped=0 WHERE id=?').run(req.params.id);
   // A changed category is now the user's choice, so rules leave it alone (#3488).
-  if (old && (old.category ?? '').trim() !== (t.category ?? '').trim()) setCategorySource(req.params.id, t.category);
+  if (old && (old.category ?? '').trim() !== (t.category ?? '').trim()) {
+    setCategorySource(req.params.id, t.category);
+    proposeRuleFor(req.params.id);
+  }
   // A category given in the editor settles a row skipped on the category picker.
   if (typeof t.category === 'string' && t.category.trim()) db.prepare('UPDATE transactions SET category_skipped=0 WHERE id=?').run(req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
@@ -244,6 +248,8 @@ app.put('/api/transactions/:id/category', (req, res) => {
   // Assigning (or undoing) settles the row, so it is no longer "skipped" (#3344).
   db.prepare('UPDATE transactions SET category=?, category_skipped=0 WHERE id=?').run(value, req.params.id);
   setCategorySource(req.params.id, value);
+  // The same category given by hand often enough becomes a rule proposal in the Inbox (#3490).
+  proposeRuleFor(req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 });
 

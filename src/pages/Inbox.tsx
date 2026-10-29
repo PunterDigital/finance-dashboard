@@ -65,7 +65,8 @@ export default function Inbox() {
       {items && items.length === 0 && (
         <div className="card empty">
           Nothing to review. Price changes and payments that may have stopped show up here after you run
-          <b> Detect recurring</b>.
+          <b> Detect recurring</b>. A rule is proposed here when you give the same description the same
+          category 3 times.
         </div>
       )}
 
