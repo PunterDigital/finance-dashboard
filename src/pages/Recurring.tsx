@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { dateLabel, num, todayStr } from '../format';
 import { RecurringItem } from '../types';
+import { recurringStatus } from '../recurring-status';
 import { Toast, useToast } from '../components/ui';
 
 export default function Recurring() {
@@ -67,18 +68,26 @@ export default function Recurring() {
               </thead>
               <tbody>
                 {rows.map((r) => {
-                  const overdue = r.active === 1 && r.next_expected != null && r.next_expected < today;
+                  const status = recurringStatus(r, today);
                   return (
                     <tr key={r.id} style={r.active ? undefined : { opacity: 0.5 }}>
                       <td>{r.description}</td>
-                      <td className="num">{r.amount != null ? `${num(r.amount)} ${r.currency}` : '—'}</td>
+                      <td className="num">
+                        {r.amount != null ? `${num(r.amount)} ${r.currency}` : '—'}
+                        {r.previous_amount != null && r.price_changed_on && (
+                          <div className="muted small" data-testid="price-change">
+                            Price changed from {num(r.previous_amount)} to {num(r.amount ?? 0)} on {dateLabel(r.price_changed_on)}
+                          </div>
+                        )}
+                      </td>
                       <td className="muted">{r.account ?? '—'}</td>
                       <td className="muted">{r.category ?? '—'}</td>
                       <td><span className="badge neutral">{r.frequency ?? '—'}</span></td>
                       <td className="mono">{dateLabel(r.last_seen)}</td>
                       <td className="mono">
                         {dateLabel(r.next_expected)}{' '}
-                        {overdue && <span className="badge warn">overdue</span>}
+                        {status === 'overdue' && <span className="badge warn">overdue</span>}
+                        {status === 'stopped' && <span className="badge expense">missed, maybe stopped</span>}
                       </td>
                       <td className="num muted">{r.occurrences}×</td>
                       <td>

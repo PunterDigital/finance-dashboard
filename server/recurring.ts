@@ -4,6 +4,7 @@ import { db } from './db.js';
 // - results replace previous auto-detected rows (no endless appending)
 // - the `active` flag of an existing row with the same description is preserved
 // - transfers are excluded (a recurring internal transfer isn't a bill)
+// - a price change continues the same item instead of starting a new one (#3487)
 
 interface Pattern {
   description: string;
@@ -12,6 +13,57 @@ interface Pattern {
   account: string;
   category: string | null;
   dates: string[];
+  amounts: number[];
+}
+
+// One item over time: the amount-based patterns that follow each other without overlapping.
+interface Chain {
+  parts: Pattern[];
+}
+
+export function normaliseDescription(description: string): string {
+  return description
+    .toLowerCase()
+    .trim()
+    .replace(/\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}/g, '')
+    .replace(/ref[\s:#]*\w+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function frequencyOf(avg: number): string | null {
+  if (avg >= 5 && avg <= 10) return 'Weekly';
+  if (avg >= 12 && avg <= 17) return 'Bi-Weekly';
+  if (avg >= 25 && avg <= 35) return 'Monthly';
+  if (avg >= 80 && avg <= 100) return 'Quarterly';
+  if (avg >= 340 && avg <= 400) return 'Annually';
+  return null;
+}
+
+function meanInterval(dates: string[]): number | null {
+  if (dates.length < 2) return null;
+  return daysBetween(dates[0], dates[dates.length - 1]) / (dates.length - 1);
+}
+
+// Joins patterns with the same description and currency when the next one starts about one interval
+// after the previous one ends: that is a price change. Patterns that run at the same time stay
+// separate (two products from one merchant).
+function chainPatterns(patterns: Pattern[]): Chain[] {
+  const sorted = [...patterns].sort((a, b) => a.dates[0].localeCompare(b.dates[0]));
+  const chains: Chain[] = [];
+  for (const p of sorted) {
+    const next = chains.find((c) => {
+      const last = c.parts[c.parts.length - 1];
+      const end = last.dates[last.dates.length - 1];
+      const gap = daysBetween(end, p.dates[0]);
+      const interval = meanInterval(c.parts.flatMap((x) => x.dates)) ?? meanInterval(p.dates);
+      if (interval == null || !frequencyOf(interval)) return false;
+      return gap >= interval * 0.5 && gap <= interval * 1.5;
+    });
+    if (next) next.parts.push(p);
+    else chains.push({ parts: [p] });
+  }
+  return chains;
 }
 
 function daysBetween(a: string, b: string): number {
@@ -38,85 +90,98 @@ export function detectRecurring() {
     )
     .all() as { date: string; description: string; account: string; category: string | null; amount: number; currency: string }[];
 
+  // Transactions are in date order, so each pattern's dates and amounts are too.
   const patterns = new Map<string, Pattern>();
   for (const t of txs) {
     if (!t.date || !t.description || !t.amount) continue;
-    const normDesc = t.description
-      .toLowerCase()
-      .trim()
-      .replace(/\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}/g, '')
-      .replace(/ref[\s:#]*\w+/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const normDesc = normaliseDescription(t.description);
     const amountKey = Math.round(Math.abs(t.amount) / 10) * 10;
     const key = `${normDesc}|${amountKey}|${t.currency}`;
     let p = patterns.get(key);
     if (!p) {
-      p = { description: t.description, amount: t.amount, currency: t.currency, account: t.account, category: t.category, dates: [] };
+      p = { description: t.description, amount: t.amount, currency: t.currency, account: t.account, category: t.category, dates: [], amounts: [] };
       patterns.set(key, p);
     }
     p.dates.push(t.date);
+    p.amounts.push(t.amount);
+    p.category = t.category ?? p.category;
+  }
+
+  const groups = new Map<string, Pattern[]>();
+  for (const [key, p] of patterns) {
+    const [normDesc, , currency] = key.split('|');
+    const g = groups.get(`${normDesc}|${currency}`) ?? [];
+    g.push(p);
+    groups.set(`${normDesc}|${currency}`, g);
   }
 
   const recurring: {
     description: string; amount: number; currency: string; account: string;
     category: string | null; frequency: string; lastSeen: string; nextExpected: string; occurrences: number;
+    previousAmount: number | null; priceChangedOn: string | null;
   }[] = [];
 
-  for (const p of patterns.values()) {
-    if (p.dates.length < 2) continue;
-    p.dates.sort();
+  for (const chain of [...groups.values()].flatMap(chainPatterns)) {
+    const dates = chain.parts.flatMap((p) => p.dates).sort();
+    if (dates.length < 2) continue;
     const intervals: number[] = [];
-    for (let j = 1; j < p.dates.length; j++) intervals.push(daysBetween(p.dates[j - 1], p.dates[j]));
+    for (let j = 1; j < dates.length; j++) intervals.push(daysBetween(dates[j - 1], dates[j]));
     const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
 
-    let frequency: string | null = null;
-    if (avg >= 5 && avg <= 10) frequency = 'Weekly';
-    else if (avg >= 12 && avg <= 17) frequency = 'Bi-Weekly';
-    else if (avg >= 25 && avg <= 35) frequency = 'Monthly';
-    else if (avg >= 80 && avg <= 100) frequency = 'Quarterly';
-    else if (avg >= 340 && avg <= 400) frequency = 'Annually';
+    const frequency = frequencyOf(avg);
     if (!frequency) continue;
 
     const variance = intervals.reduce((s, v) => s + (v - avg) ** 2, 0) / intervals.length;
-    if (Math.sqrt(variance) > avg * 0.3 && p.dates.length < 4) continue;
+    if (Math.sqrt(variance) > avg * 0.3 && dates.length < 4) continue;
 
-    const lastSeen = p.dates[p.dates.length - 1];
+    const first = chain.parts[0];
+    const latest = chain.parts[chain.parts.length - 1];
+    const before = chain.parts.length > 1 ? chain.parts[chain.parts.length - 2] : null;
+    const lastSeen = dates[dates.length - 1];
     recurring.push({
-      description: p.description,
-      amount: p.amount,
-      currency: p.currency,
-      account: p.account,
-      category: p.category,
+      description: first.description,
+      amount: latest.amounts[latest.amounts.length - 1],
+      currency: latest.currency,
+      account: latest.account,
+      category: latest.category,
       frequency,
       lastSeen,
       nextExpected: addInterval(lastSeen, frequency),
-      occurrences: p.dates.length,
+      occurrences: dates.length,
+      previousAmount: before ? before.amounts[before.amounts.length - 1] : null,
+      priceChangedOn: before ? latest.dates[0] : null,
     });
   }
 
   recurring.sort((a, b) => b.occurrences - a.occurrences);
 
-  // Upsert keyed on lowercased description, preserving the active flag.
-  const existing = db.prepare('SELECT id, description, active FROM recurring').all() as { id: number; description: string; active: number }[];
-  const existingByDesc = new Map(existing.map((r) => [r.description.toLowerCase().trim(), r]));
+  // Upsert keyed on lowercased description, preserving the active flag. One merchant can have two
+  // items (two products): those match the existing row with the nearest amount.
+  const existing = db.prepare('SELECT id, description, amount, active FROM recurring').all() as { id: number; description: string; amount: number | null; active: number }[];
   const seen = new Set<number>();
+  const findExisting = (r: (typeof recurring)[number]) => {
+    const desc = r.description.toLowerCase().trim();
+    const candidates = existing.filter((e) => !seen.has(e.id) && e.description.toLowerCase().trim() === desc);
+    const distance = (e: (typeof existing)[number]) =>
+      Math.min(...[r.amount, r.previousAmount].filter((a): a is number => a != null).map((a) => Math.abs((e.amount ?? 0) - a)));
+    return candidates.sort((a, b) => distance(a) - distance(b))[0];
+  };
   const insert = db.prepare(
-    `INSERT INTO recurring (description, amount, currency, account, category, frequency, last_seen, next_expected, active, occurrences)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO recurring (description, amount, currency, account, category, frequency, last_seen, next_expected, active, occurrences, previous_amount, price_changed_on)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   );
   const update = db.prepare(
-    `UPDATE recurring SET amount=?, currency=?, account=?, category=?, frequency=?, last_seen=?, next_expected=?, occurrences=? WHERE id=?`
+    `UPDATE recurring SET amount=?, currency=?, account=?, category=?, frequency=?, last_seen=?, next_expected=?, occurrences=?, previous_amount=?, price_changed_on=? WHERE id=?`
   );
 
   const applyAll = db.transaction(() => {
     for (const r of recurring) {
-      const prev = existingByDesc.get(r.description.toLowerCase().trim());
+      const prev = findExisting(r);
       if (prev) {
-        update.run(r.amount, r.currency, r.account, r.category, r.frequency, r.lastSeen, r.nextExpected, r.occurrences, prev.id);
+        update.run(r.amount, r.currency, r.account, r.category, r.frequency, r.lastSeen, r.nextExpected, r.occurrences, r.previousAmount, r.priceChangedOn, prev.id);
         seen.add(prev.id);
       } else {
-        insert.run(r.description, r.amount, r.currency, r.account, r.category, r.frequency, r.lastSeen, r.nextExpected, 1, r.occurrences);
+        insert.run(r.description, r.amount, r.currency, r.account, r.category, r.frequency, r.lastSeen, r.nextExpected, 1, r.occurrences, r.previousAmount, r.priceChangedOn);
       }
     }
     // Flag matching transactions
