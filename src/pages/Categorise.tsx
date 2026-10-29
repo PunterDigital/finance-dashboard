@@ -15,6 +15,8 @@ type Option = { kind: 'pick'; cat: Category; suggested: boolean } | { kind: 'add
 
 export function notifyCategoryChanged() {
   window.dispatchEvent(new Event('category-changed'));
+  // A category set by hand can add a rule proposal to the Inbox (#3490).
+  window.dispatchEvent(new Event('suggestions-changed'));
 }
 
 // Assign categories (#2892): one uncategorised income or expense row at a time, newest first, with a

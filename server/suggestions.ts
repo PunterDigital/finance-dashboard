@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { RuleError, audit, createRule, parseDraft } from './rules.js';
+import { RuleError, activeRules, audit, createRule, decide, normalise, parseDraft, type RuleDraft } from './rules.js';
 import { recurringStatus } from '../src/recurring-status.js';
 
 // Suggestions for the Inbox (#3489). Code (and later the LLM agent) writes them; nothing changes the
@@ -150,6 +150,47 @@ export function rejectSuggestion(id: number) {
   pending(id);
   setStatus(id, 'rejected');
   return { id, status: 'rejected' };
+}
+
+// How many times the same description must get the same category by hand before a rule is proposed.
+export const PROPOSE_AFTER = 3;
+
+// After a category is set by hand (#3490): when rows of this type with the same normalised description
+// were given the same category PROPOSE_AFTER times by hand, more often than any other category, and no
+// active rule covers any of them, propose an exact rule for it. The key holds the description and the
+// category, so a rejected proposal isn't made again, but a different category can be proposed later.
+// Returns the new suggestion's id, or null.
+export function proposeRuleFor(txId: number | string): number | null {
+  const tx = db.prepare('SELECT description, type, category, category_source FROM transactions WHERE id=?').get(txId) as
+    { description: string; type: string; category: string | null; category_source: string | null } | undefined;
+  if (!tx || tx.category_source !== 'user' || !tx.category?.trim()) return null;
+  if (tx.type !== 'Income' && tx.type !== 'Expense') return null;
+  const text = normalise(tx.description ?? '');
+  if (!text || text.length > 200) return null;
+  // SQLite's lower() is ASCII-only, so the description match happens here.
+  const rows = (db
+    .prepare("SELECT description, account, type, amount, category FROM transactions WHERE type=? AND category_source='user' AND trim(category) != ''")
+    .all(tx.type) as { description: string; account: string; type: string; amount: number; category: string }[])
+    .filter((r) => normalise(r.description ?? '') === text);
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.category, (counts.get(r.category) ?? 0) + 1);
+  const ranked = [...counts].sort((a, b) => b[1] - a[1]);
+  const [category, n] = ranked[0] ?? ['', 0];
+  if (category !== tx.category || n < PROPOSE_AFTER || (ranked[1] && ranked[1][1] === n)) return null;
+  const rules = activeRules();
+  if (rows.some((r) => decide(r, rules))) return null;
+  let draft: RuleDraft;
+  try {
+    draft = parseDraft({ match: 'exact', text, account: null, type: tx.type, amount_min: null, amount_max: null, category });
+  } catch {
+    return null; // e.g. the category was deleted
+  }
+  return addSuggestion('rule', {
+    key: `auto:${tx.type}:${text}:${category}`,
+    draft,
+    author: 'auto',
+    reason: `You gave this description this category by hand ${n} times.`,
+  });
 }
 
 // After recurring detection: a notice for each price change and each item that looks stopped. Pending
