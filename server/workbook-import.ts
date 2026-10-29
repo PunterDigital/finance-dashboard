@@ -76,8 +76,8 @@ export function importWorkbook(wb: xlsx.WorkBook): ImportCounts {
   // ---- Transactions (header row 4, data from row 5) ----
   const txRows = sheetRows(wb, 'Transactions').slice(4);
   const insTx = db.prepare(
-    `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring, category_source)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
   const insFx = db.prepare('INSERT OR IGNORE INTO fx_rates (date, base, quote, rate) VALUES (?,?,?,?)');
   let nTx = 0;
@@ -89,11 +89,12 @@ export function importWorkbook(wb: xlsx.WorkBook): ImportCounts {
       const currency = String(r[5] ?? 'CZK').trim().toUpperCase();
       const fxRate = toAmount(r[6]);
       const amountCzk = toAmount(r[7]) ?? (fxRate != null ? amount * fxRate : null);
+      const category = r[3] ? String(r[3]).trim() : null;
       insTx.run(
         date,
         String(r[1] ?? '').trim(),
         String(r[2] ?? '').trim(),
-        r[3] ? String(r[3]).trim() : null,
+        category,
         amount,
         currency,
         fxRate,
@@ -101,7 +102,8 @@ export function importWorkbook(wb: xlsx.WorkBook): ImportCounts {
         String(r[8] ?? 'Expense').trim(),
         r[9] ? String(r[9]).trim() : null,
         r[10] ? String(r[10]) : null,
-        String(r[11] ?? '').toLowerCase() === 'yes' ? 1 : 0
+        String(r[11] ?? '').toLowerCase() === 'yes' ? 1 : 0,
+        category ? 'import' : null
       );
       // Warm the FX cache from historical rates already in the sheet
       if (fxRate != null && currency !== 'CZK') insFx.run(date, currency, 'CZK', fxRate);

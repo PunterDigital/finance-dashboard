@@ -12,6 +12,7 @@ import Transfers from './pages/Transfers';
 import Settings from './pages/Settings';
 import Sort from './pages/Sort';
 import Categorise from './pages/Categorise';
+import Rules from './pages/Rules';
 import { APP_VERSION } from './version';
 import UpdateBanner from './components/UpdateBanner';
 
@@ -58,6 +59,7 @@ export default function App() {
           <NavLink to="/burn-rate">Burn Rate</NavLink>
           <NavLink to="/recurring">Recurring</NavLink>
           <div className="nav-section">Manage</div>
+          <NavLink to="/rules">Rules</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div className="sidebar-version" data-testid="app-version">v{APP_VERSION}</div>
@@ -76,6 +78,7 @@ export default function App() {
             <Route path="/categories" element={<SpendPerCategory />} />
             <Route path="/burn-rate" element={<BurnRate />} />
             <Route path="/recurring" element={<Recurring />} />
+            <Route path="/rules" element={<Rules />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>

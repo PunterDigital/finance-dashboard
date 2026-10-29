@@ -52,7 +52,7 @@ describe('accounts, categories and transactions', () => {
 
   it('flags duplicates on CSV import check', async () => {
     const row = { date: '2026-04-01', description: 'Rent', account: 'Current', amount: -15000, currency: 'CZK', type: 'Expense' };
-    expect((await api.post('/api/import', { rows: [row] })).body).toEqual({ inserted: 1, fxMissing: 0 });
+    expect((await api.post('/api/import', { rows: [row] })).body).toEqual({ inserted: 1, fxMissing: 0, categorised: 0 });
     const check = await api.post('/api/import/check', { rows: [row, { ...row, description: 'Other' }] });
     expect(check.body).toEqual([
       { duplicate: true, duplicateInBatch: false },

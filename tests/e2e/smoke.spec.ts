@@ -26,6 +26,7 @@ test('launches with an empty isolated database and every page renders', async ({
     ['Spend per Category', /Spend per Category/],
     ['Burn Rate', /Burn Rate/],
     ['Recurring', /Recurring/],
+    ['Rules', 'Rules'],
     ['Settings', 'Settings'],
   ] as const) {
     const navLink = page.getByRole('link', { name: link, exact: true });

@@ -492,6 +492,9 @@ export default function ImportPage() {
           <ul className="small" style={{ color: 'var(--ink-2)' }}>
             {result.skippedDup > 0 && <li>{result.skippedDup} duplicates skipped</li>}
             {result.invalid > 0 && <li>{result.invalid} invalid rows skipped</li>}
+            {result.categorised > 0 && (
+              <li>{result.categorised} rows categorised by your <Link to="/rules">rules</Link></li>
+            )}
             {result.fxMissing > 0 && (
               <li>
                 {result.fxMissing} rows are missing an FX rate (API unreachable) — fix them later from the{' '}

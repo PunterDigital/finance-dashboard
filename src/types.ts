@@ -13,6 +13,9 @@ export interface Tx {
   notes: string | null;
   recurring: number;
   necessity: Necessity | null;
+  category_source: 'user' | 'rule' | 'llm' | 'import' | null;
+  category_rule_id: number | null;
+  category_rule_version: number | null;
 }
 
 export type Necessity = 'need' | 'want';
@@ -58,6 +61,47 @@ export interface MonthlyRow {
   topCategory: string | null;
   topCategoryAmount: number;
   avgDailySpend: number;
+}
+
+// One version of a category rule (#3488). `text` is normalised (lower case, single spaces).
+export interface RuleDraft {
+  match: 'exact' | 'contains';
+  text: string;
+  account: string | null;
+  type: 'Income' | 'Expense';
+  amount_min: number | null;
+  amount_max: number | null;
+  category: string;
+}
+
+export interface RuleVersion extends RuleDraft {
+  rule_id: number;
+  version: number;
+  author: string;
+  created_at: string;
+}
+
+export interface RuleListItem extends RuleVersion {
+  status: 'active' | 'retired';
+  current_version: number;
+  row_count: number;
+}
+
+export interface RuleAudit {
+  id: number;
+  rule_id: number;
+  version: number | null;
+  action: string;
+  actor: string;
+  at: string;
+  before_json: string | null;
+  after_json: string | null;
+}
+
+export interface RulePreview {
+  count: number;
+  conflicts: number;
+  rows: { id: number; date: string; description: string; account: string; amount: number; currency: string; from: string | null; to: string }[];
 }
 
 export interface ImportTemplate {
