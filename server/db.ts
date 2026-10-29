@@ -163,6 +163,61 @@ if (!txCols.includes('necessity_skipped')) {
 if (!txCols.includes('category_skipped')) {
   db.exec('ALTER TABLE transactions ADD COLUMN category_skipped INTEGER NOT NULL DEFAULT 0');
 }
+// Who set a row's category (#3488): 'user', 'rule', 'llm' or 'import'; NULL while it has none. A rule
+// never changes a 'user' category. Categories that existed before this column can't be told apart,
+// so they count as 'user' (rules leave them alone). A rule-set row also records the rule and version,
+// so a rollback finds the rows that rule set.
+if (!txCols.includes('category_source')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN category_source TEXT');
+  db.exec("UPDATE transactions SET category_source='user' WHERE category IS NOT NULL AND trim(category) != ''");
+}
+if (!txCols.includes('category_rule_id')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN category_rule_id INTEGER');
+}
+if (!txCols.includes('category_rule_version')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN category_rule_version INTEGER');
+}
+
+// Category rules (#3488, server/rules.ts). rule_versions is append-only: an edit, a rollback or a
+// category rename writes a new version and moves rules.current_version. rule_audit logs every change.
+db.exec(`
+CREATE TABLE IF NOT EXISTS rules (
+  id INTEGER PRIMARY KEY,
+  current_version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS rule_versions (
+  rule_id INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  match TEXT NOT NULL,
+  text TEXT NOT NULL,
+  account TEXT,
+  type TEXT NOT NULL,
+  amount_min REAL,
+  amount_max REAL,
+  category TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (rule_id, version)
+);
+CREATE TRIGGER IF NOT EXISTS rule_versions_append_only BEFORE UPDATE ON rule_versions
+BEGIN SELECT RAISE(ABORT, 'rule_versions is append-only'); END;
+
+CREATE TABLE IF NOT EXISTS rule_audit (
+  id INTEGER PRIMARY KEY,
+  rule_id INTEGER NOT NULL,
+  version INTEGER,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  before_json TEXT,
+  after_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tx_category_rule ON transactions(category_rule_id);
+`);
+
 // The amount before the latest price change of a recurring item, and the date of the first payment
 // at the new price (#3487). Both NULL when the price never changed.
 const recurringCols = (db.pragma('table_info(recurring)') as { name: string }[]).map((c) => c.name);

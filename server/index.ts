@@ -11,6 +11,10 @@ import { autoMatchTransfers, listTransfers, linkTransfers, unlinkTransfer, flipT
 import { listMonths, monthlySummary, spendPerCategory, burnRate, overview, accountBalances } from './reports.js';
 import { readAppSettings, writeAppSettings } from './app-settings.js';
 import { getUpdateController } from './updates.js';
+import {
+  RuleError, applyRules, createRule, editRule, getRule, listRules, parseDraft, previewRollback, previewSave,
+  renameCategoryInRules, retireRule, rollbackRule,
+} from './rules.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -95,15 +99,16 @@ app.post('/api/transactions', asyncH(async (req, res) => {
   const { rate, amountCzk } = await computeCzk(t);
   const info = db
     .prepare(
-      `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring, category_source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
-    .run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0);
+    .run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, sourceOf(t.category));
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(info.lastInsertRowid));
 }));
 
 app.put('/api/transactions/:id', asyncH(async (req, res) => {
   const t = req.body;
+  const old = db.prepare('SELECT category FROM transactions WHERE id=?').get(req.params.id) as { category: string | null } | undefined;
   // A row edited away from Transfer can't stay linked to a counterpart
   if (t.type !== 'Transfer') unlinkTransfer(Number(req.params.id));
   const { rate, amountCzk } = await computeCzk(t);
@@ -111,6 +116,8 @@ app.put('/api/transactions/:id', asyncH(async (req, res) => {
     `UPDATE transactions SET date=?, description=?, account=?, category=?, amount=?, currency=?, fx_rate=?, amount_czk=?, type=?, entity=?, notes=?, recurring=? WHERE id=?`
   ).run(t.date, t.description ?? '', t.account, t.category ?? null, t.amount, t.currency ?? 'CZK', rate, amountCzk, t.type ?? 'Expense', t.entity ?? null, t.notes ?? null, t.recurring ? 1 : 0, req.params.id);
   if ((t.type ?? 'Expense') !== 'Expense') db.prepare('UPDATE transactions SET necessity=NULL, necessity_skipped=0 WHERE id=?').run(req.params.id);
+  // A changed category is now the user's choice, so rules leave it alone (#3488).
+  if (old && (old.category ?? '').trim() !== (t.category ?? '').trim()) setCategorySource(req.params.id, t.category);
   // A category given in the editor settles a row skipped on the category picker.
   if (typeof t.category === 'string' && t.category.trim()) db.prepare('UPDATE transactions SET category_skipped=0 WHERE id=?').run(req.params.id);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
@@ -121,6 +128,16 @@ app.delete('/api/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM transactions WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+
+// Who set a category (#3488): a category typed or picked by hand is the user's; none has no source.
+function sourceOf(category: unknown): 'user' | null {
+  return typeof category === 'string' && category.trim() ? 'user' : null;
+}
+
+function setCategorySource(id: string | number, category: unknown) {
+  db.prepare('UPDATE transactions SET category_source=?, category_rule_id=NULL, category_rule_version=NULL WHERE id=?')
+    .run(sourceOf(category), id);
+}
 
 // ---------- need / want (#2818) ----------
 // Sets or clears (null) the need/want choice on one expense.
@@ -225,6 +242,7 @@ app.put('/api/transactions/:id/category', (req, res) => {
   }
   // Assigning (or undoing) settles the row, so it is no longer "skipped" (#3344).
   db.prepare('UPDATE transactions SET category=?, category_skipped=0 WHERE id=?').run(value, req.params.id);
+  setCategorySource(req.params.id, value);
   res.json(db.prepare('SELECT * FROM transactions WHERE id=?').get(req.params.id));
 });
 
@@ -327,13 +345,48 @@ app.put('/api/categories/:id', (req, res) => {
   const c = req.body;
   const old = db.prepare('SELECT name FROM categories WHERE id=?').get(req.params.id) as any;
   db.prepare('UPDATE categories SET name=?, type=?, grp=? WHERE id=?').run(c.name, c.type, c.grp ?? 'Other', req.params.id);
-  if (old && old.name !== c.name) db.prepare('UPDATE transactions SET category=? WHERE category=?').run(c.name, old.name);
+  if (old && old.name !== c.name) {
+    db.prepare('UPDATE transactions SET category=? WHERE category=?').run(c.name, old.name);
+    renameCategoryInRules(old.name, c.name);
+  }
   res.json({ ok: true });
 });
 app.delete('/api/categories/:id', (req, res) => {
   db.prepare('DELETE FROM categories WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+
+// ---------- category rules (#3488) ----------
+// Sends a RuleError as its status; anything else is a 500.
+const ruleH = (fn: (req: express.Request<Record<string, string>>) => unknown) =>
+  (req: express.Request<Record<string, string>>, res: express.Response) => {
+    try {
+      res.json(fn(req));
+    } catch (err) {
+      if (err instanceof RuleError) res.status(err.status).json({ error: err.message });
+      else {
+        console.error(err);
+        res.status(500).json({ error: (err as Error)?.message ?? 'Internal error' });
+      }
+    }
+  };
+const ruleId = (req: express.Request<Record<string, string>>) => Number(req.params.id);
+const toVersion = (req: express.Request) => {
+  const v = Number(req.body.version);
+  if (!Number.isInteger(v) || v < 1) throw new RuleError('version must be a version number');
+  return v;
+};
+
+app.get('/api/rules', ruleH(() => listRules()));
+app.get('/api/rules/:id', ruleH((req) => getRule(ruleId(req))));
+// How many rows saving a draft would change, with up to 50 of them. `id` = the rule being edited.
+app.post('/api/rules/preview', ruleH((req) => previewSave(req.body.id == null ? null : Number(req.body.id), parseDraft(req.body.draft))));
+app.post('/api/rules', ruleH((req) => createRule(parseDraft(req.body.draft))));
+app.put('/api/rules/:id', ruleH((req) => editRule(ruleId(req), parseDraft(req.body.draft))));
+app.post('/api/rules/:id/retire', ruleH((req) => retireRule(ruleId(req))));
+app.post('/api/rules/:id/rollback/preview', ruleH((req) => previewRollback(ruleId(req), toVersion(req))));
+app.post('/api/rules/:id/rollback', ruleH((req) => rollbackRule(ruleId(req), toVersion(req))));
+app.post('/api/rules/apply', ruleH(() => applyRules()));
 
 // ---------- reports ----------
 app.get('/api/reports/overview', (req, res) => res.json(overview((req.query.month as string) || currentMonth())));
@@ -470,17 +523,22 @@ app.post('/api/import', asyncH(async (req, res) => {
     prepared.push({ ...r, fx_rate: rate, amount_czk: amountCzk });
   }
   const ins = db.prepare(
-    `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,0)`
+    `INSERT INTO transactions (date, description, account, category, amount, currency, fx_rate, amount_czk, type, entity, notes, recurring, category_source)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?)`
   );
+  const ids: number[] = [];
   const commit = db.transaction(() => {
     for (const r of prepared) {
-      ins.run(r.date, r.description ?? '', r.account, r.category ?? null, r.amount, r.currency ?? 'CZK', r.fx_rate, r.amount_czk, r.type ?? 'Expense', r.entity ?? null, r.notes ?? null);
+      const category = typeof r.category === 'string' && r.category.trim() ? r.category : null;
+      const info = ins.run(r.date, r.description ?? '', r.account, category, r.amount, r.currency ?? 'CZK', r.fx_rate, r.amount_czk, r.type ?? 'Expense', r.entity ?? null, r.notes ?? null, category ? 'import' : null);
+      ids.push(Number(info.lastInsertRowid));
       inserted++;
     }
   });
   commit();
-  res.json({ inserted, fxMissing });
+  // Rules categorise the new rows that came without a category (#3488).
+  const { changed: categorised } = applyRules(ids);
+  res.json({ inserted, fxMissing, categorised });
 }));
 
 // ---------- database maintenance ----------
