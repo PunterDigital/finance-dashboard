@@ -45,6 +45,8 @@ export interface RecurringItem {
   next_expected: string | null;
   active: number;
   occurrences: number;
+  previous_amount: number | null;
+  price_changed_on: string | null;
 }
 
 export interface MonthlyRow {

@@ -163,3 +163,12 @@ if (!txCols.includes('necessity_skipped')) {
 if (!txCols.includes('category_skipped')) {
   db.exec('ALTER TABLE transactions ADD COLUMN category_skipped INTEGER NOT NULL DEFAULT 0');
 }
+// The amount before the latest price change of a recurring item, and the date of the first payment
+// at the new price (#3487). Both NULL when the price never changed.
+const recurringCols = (db.pragma('table_info(recurring)') as { name: string }[]).map((c) => c.name);
+if (!recurringCols.includes('previous_amount')) {
+  db.exec('ALTER TABLE recurring ADD COLUMN previous_amount REAL');
+}
+if (!recurringCols.includes('price_changed_on')) {
+  db.exec('ALTER TABLE recurring ADD COLUMN price_changed_on TEXT');
+}
