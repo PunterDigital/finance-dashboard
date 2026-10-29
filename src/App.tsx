@@ -13,27 +13,31 @@ import Settings from './pages/Settings';
 import Sort from './pages/Sort';
 import Categorise from './pages/Categorise';
 import Rules from './pages/Rules';
+import Inbox from './pages/Inbox';
 import { APP_VERSION } from './version';
 import UpdateBanner from './components/UpdateBanner';
 
-// What's left to do in a review queue, for a nav badge: rows still to go through, not counting the
-// ones skipped (#3344). Refreshed on navigation and `event`.
-function useQueueCount(url: string, event: string) {
+// A count for a nav badge, read from `url` with `pick`. Refreshed on navigation and `event`.
+function useNavCount<T>(url: string, event: string, pick: (d: T) => number) {
   const [n, setN] = useState<number | null>(null);
   const { pathname } = useLocation();
   useEffect(() => {
-    const refresh = () =>
-      api.get<{ total: number; skipped: number }>(url).then((d) => setN(d.total - d.skipped)).catch(() => {});
+    const refresh = () => api.get<T>(url).then((d) => setN(pick(d))).catch(() => {});
     refresh();
     window.addEventListener(event, refresh);
     return () => window.removeEventListener(event, refresh);
-  }, [pathname, url, event]);
+  }, [pathname, url, event, pick]);
   return n;
 }
 
+// What's left to do in a review queue: rows still to go through, not counting the ones skipped (#3344).
+const leftToDo = (d: { total: number; skipped: number }) => d.total - d.skipped;
+const pendingSuggestions = (d: { pending: number }) => d.pending;
+
 export default function App() {
-  const unsorted = useQueueCount('/api/necessity/queue?limit=1', 'necessity-changed');
-  const uncategorised = useQueueCount('/api/category/queue?limit=1', 'category-changed');
+  const unsorted = useNavCount('/api/necessity/queue?limit=1', 'necessity-changed', leftToDo);
+  const uncategorised = useNavCount('/api/category/queue?limit=1', 'category-changed', leftToDo);
+  const inbox = useNavCount('/api/suggestions/count', 'suggestions-changed', pendingSuggestions);
   return (
     <div className="app">
       <aside className="sidebar">
@@ -42,6 +46,10 @@ export default function App() {
         </h1>
         <nav>
           <NavLink to="/" end>Dashboard</NavLink>
+          <NavLink to="/inbox">
+            Inbox
+            {inbox ? <span className="nav-count" aria-label={`${inbox} to review`}>{inbox}</span> : null}
+          </NavLink>
           <NavLink to="/transactions">Transactions</NavLink>
           <NavLink to="/sort">
             Sort need/want
@@ -79,6 +87,7 @@ export default function App() {
             <Route path="/burn-rate" element={<BurnRate />} />
             <Route path="/recurring" element={<Recurring />} />
             <Route path="/rules" element={<Rules />} />
+            <Route path="/inbox" element={<Inbox />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>

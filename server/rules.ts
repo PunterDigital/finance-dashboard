@@ -209,7 +209,7 @@ function getVersion(id: number, version: number): RuleVersion | undefined {
   return db.prepare('SELECT * FROM rule_versions WHERE rule_id=? AND version=?').get(id, version) as RuleVersion | undefined;
 }
 
-function audit(ruleId: number, version: number | null, action: string, before: unknown, after: unknown, actor = 'user') {
+export function audit(ruleId: number, version: number | null, action: string, before: unknown, after: unknown, actor = 'user') {
   db.prepare('INSERT INTO rule_audit (rule_id, version, action, actor, before_json, after_json) VALUES (?,?,?,?,?,?)')
     .run(ruleId, version, action, actor, before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after));
 }

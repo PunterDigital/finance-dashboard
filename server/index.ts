@@ -15,6 +15,7 @@ import {
   RuleError, applyRules, createRule, editRule, getRule, listRules, parseDraft, previewRollback, previewSave,
   renameCategoryInRules, retireRule, rollbackRule,
 } from './rules.js';
+import { acceptSuggestion, addSuggestion, listSuggestions, pendingCount, rejectSuggestion, suggestFromRecurring, type SuggestionStatus } from './suggestions.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -357,7 +358,7 @@ app.delete('/api/categories/:id', (req, res) => {
 });
 
 // ---------- category rules (#3488) ----------
-// Sends a RuleError as its status; anything else is a 500.
+// Sends a RuleError (or SuggestionError) as its status; anything else is a 500.
 const ruleH = (fn: (req: express.Request<Record<string, string>>) => unknown) =>
   (req: express.Request<Record<string, string>>, res: express.Response) => {
     try {
@@ -387,6 +388,23 @@ app.post('/api/rules/:id/retire', ruleH((req) => retireRule(ruleId(req))));
 app.post('/api/rules/:id/rollback/preview', ruleH((req) => previewRollback(ruleId(req), toVersion(req))));
 app.post('/api/rules/:id/rollback', ruleH((req) => rollbackRule(ruleId(req), toVersion(req))));
 app.post('/api/rules/apply', ruleH(() => applyRules()));
+
+// ---------- Inbox suggestions (#3489) ----------
+const STATUSES = new Set(['pending', 'accepted', 'rejected', 'edited', 'expired']);
+app.get('/api/suggestions', ruleH((req) => {
+  const status = String(req.query.status ?? 'pending');
+  if (!STATUSES.has(status)) throw new RuleError('Unknown status');
+  return listSuggestions(status as SuggestionStatus);
+}));
+app.get('/api/suggestions/count', ruleH(() => ({ pending: pendingCount() })));
+// For the agent and for tests: the app's own code calls addSuggestion directly.
+app.post('/api/suggestions', ruleH((req) => {
+  const { kind, payload, model, prompt_version, run_id } = req.body;
+  return { id: addSuggestion(kind, payload, { model, prompt_version, run_id }) };
+}));
+// `payload` = the user's edited version (Edit), for kinds that allow it.
+app.post('/api/suggestions/:id/accept', ruleH((req) => acceptSuggestion(ruleId(req), req.body.payload ?? null)));
+app.post('/api/suggestions/:id/reject', ruleH((req) => rejectSuggestion(ruleId(req))));
 
 // ---------- reports ----------
 app.get('/api/reports/overview', (req, res) => res.json(overview((req.query.month as string) || currentMonth())));
@@ -431,7 +449,11 @@ app.put('/api/income-sources', asyncH(async (req, res) => {
 
 // ---------- recurring ----------
 app.get('/api/recurring', (_req, res) => res.json(db.prepare('SELECT * FROM recurring ORDER BY next_expected').all()));
-app.post('/api/recurring/detect', (_req, res) => res.json(detectRecurring()));
+// Detection also leaves price-change and maybe-stopped notices in the Inbox (#3489).
+app.post('/api/recurring/detect', (_req, res) => {
+  const result = detectRecurring();
+  res.json({ ...result, suggestions: suggestFromRecurring(new Date().toISOString().slice(0, 10)).added });
+});
 app.put('/api/recurring/:id', (req, res) => {
   const r = req.body;
   db.prepare('UPDATE recurring SET description=?, amount=?, currency=?, account=?, category=?, frequency=?, last_seen=?, next_expected=?, active=? WHERE id=?')

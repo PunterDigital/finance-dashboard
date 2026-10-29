@@ -104,6 +104,19 @@ export interface RulePreview {
   rows: { id: number; date: string; description: string; account: string; amount: number; currency: string; from: string | null; to: string }[];
 }
 
+// A suggestion in the Inbox (#3489). Payload text may come from bank descriptions: plain text only.
+export interface Suggestion {
+  id: number;
+  kind: string;
+  payload: any;
+  status: 'pending' | 'accepted' | 'rejected' | 'edited' | 'expired';
+  created_at: string;
+  decided_at: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  run_id: string | null;
+}
+
 export interface ImportTemplate {
   id: number;
   name: string;
