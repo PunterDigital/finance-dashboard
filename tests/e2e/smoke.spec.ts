@@ -17,6 +17,7 @@ test('launches with an empty isolated database and every page renders', async ({
   // Every route in the sidebar (src/App.tsx), so a router upgrade that breaks one fails here.
   for (const [link, heading] of [
     ['Dashboard', 'Dashboard'],
+    ['Inbox', 'Inbox'],
     ['Transactions', 'Transactions'],
     ['Sort need/want', /Sort/],
     ['Assign categories', 'Assign categories'],

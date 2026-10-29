@@ -9,7 +9,7 @@ import { Modal, Toast, TypeBadge, useToast } from '../components/ui';
 
 const EMPTY: RuleDraft = { match: 'contains', text: '', account: null, type: 'Expense', amount_min: null, amount_max: null, category: '' };
 
-function amountLabel(r: RuleDraft): string {
+export function amountLabel(r: RuleDraft): string {
   if (r.amount_min != null && r.amount_max != null) return `${num(r.amount_min)} – ${num(r.amount_max)}`;
   if (r.amount_min != null) return `≥ ${num(r.amount_min)}`;
   if (r.amount_max != null) return `≤ ${num(r.amount_max)}`;
@@ -17,7 +17,7 @@ function amountLabel(r: RuleDraft): string {
 }
 
 const categoryChanged = () => window.dispatchEvent(new Event('category-changed'));
-const rowsLabel = (n: number) => `${n} ${n === 1 ? 'row' : 'rows'}`;
+export const rowsLabel = (n: number) => `${n} ${n === 1 ? 'row' : 'rows'}`;
 
 export default function Rules() {
   const [rules, setRules] = useState<RuleListItem[]>([]);
@@ -182,13 +182,16 @@ function PreviewRows({ preview }: { preview: RulePreview }) {
   );
 }
 
-function RuleEditor({ id, initial, accounts, categories, onClose, onSaved }: {
+// `submit` replaces the save (the Inbox uses it to accept an edited rule suggestion).
+export function RuleEditor({ id, initial, accounts, categories, onClose, onSaved, submit, title }: {
   id: number | null;
   initial: RuleDraft;
   accounts: Account[];
   categories: Category[];
   onClose: () => void;
   onSaved: (applied: number) => void;
+  submit?: (draft: RuleDraft) => Promise<{ applied: number }>;
+  title?: string;
 }) {
   const [draft, setDraft] = useState<RuleDraft>({
     match: initial.match, text: initial.text, account: initial.account, type: initial.type,
@@ -219,7 +222,9 @@ function RuleEditor({ id, initial, accounts, categories, onClose, onSaved }: {
   const save = async () => {
     setSaving(true);
     try {
-      const res = id == null
+      const res = submit
+        ? await submit(draft)
+        : id == null
         ? await api.post<{ applied: number }>('/api/rules', { draft })
         : await api.put<{ applied: number }>(`/api/rules/${id}`, { draft });
       onSaved(res.applied);
@@ -230,7 +235,7 @@ function RuleEditor({ id, initial, accounts, categories, onClose, onSaved }: {
   };
 
   return (
-    <Modal title={id == null ? 'Add rule' : 'Edit rule'} onClose={onClose}>
+    <Modal title={title ?? (id == null ? 'Add rule' : 'Edit rule')} onClose={onClose}>
       <div className="form-grid">
         <label className="fld">Match
           <select value={draft.match} onChange={(e) => set({ match: e.target.value as RuleDraft['match'] })}>

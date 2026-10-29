@@ -19,7 +19,11 @@ export default function Recurring() {
     setBusy(true);
     try {
       const r = await api.post('/api/recurring/detect');
-      showToast(`Detection complete: ${r.found} recurring patterns (${r.added} new, ${r.updated} updated)`);
+      showToast(
+        `Detection complete: ${r.found} recurring patterns (${r.added} new, ${r.updated} updated)` +
+          (r.suggestions ? `. ${r.suggestions} new in the Inbox` : '')
+      );
+      window.dispatchEvent(new Event('suggestions-changed'));
       load();
     } catch (e: any) {
       showToast(`Detection failed: ${e.message}`);

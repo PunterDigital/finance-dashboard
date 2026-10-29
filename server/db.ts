@@ -216,6 +216,21 @@ CREATE TABLE IF NOT EXISTS rule_audit (
   after_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tx_category_rule ON transactions(category_rule_id);
+
+-- Suggestions waiting for the user in the Inbox (#3489, server/suggestions.ts). Nothing changes the
+-- data until one is accepted. model / prompt_version / run_id are for LLM-made suggestions.
+CREATE TABLE IF NOT EXISTS agent_suggestions (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT,
+  model TEXT,
+  prompt_version TEXT,
+  run_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_suggestions_status ON agent_suggestions(status);
 `);
 
 // The amount before the latest price change of a recurring item, and the date of the first payment
