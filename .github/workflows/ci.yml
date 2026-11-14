@@ -13,6 +13,23 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # Release bumps (`chore(release)`: version lines + CHANGELOG only) skip the heavy
+    # job below: the tag's release workflow builds and checks the packages anyway.
+    name: Detect release bump
+    runs-on: ubuntu-latest
+    outputs:
+      version_only: ${{ steps.check.outputs.version_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "version_only=$(node scripts/is-version-bump.mjs "$BASE" "$HEAD")" | tee -a "$GITHUB_OUTPUT"
+
   check:
     name: Typecheck, lint, unit tests, build
     runs-on: ubuntu-latest
@@ -30,7 +47,7 @@ jobs:
 
   package:
     name: E2E + package (${{ matrix.os }})
-    needs: check
+    needs: [check, changes]
     strategy:
       fail-fast: false
       matrix:
@@ -44,26 +61,35 @@ jobs:
             executable: dist-release/mac-universal/Finance Dashboard.app/Contents/MacOS/Finance Dashboard
             artifacts: dist-release/*.dmg
     runs-on: ${{ matrix.os }}
+    # Steps (not the job) carry the release-bump skip: a skipped matrix job reports one
+    # unexpanded check name, and the required per-OS checks would never arrive.
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.version_only != 'true'
       - uses: actions/setup-node@v7
+        if: needs.changes.outputs.version_only != 'true'
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+        if: needs.changes.outputs.version_only != 'true'
       - run: npm run build
+        if: needs.changes.outputs.version_only != 'true'
       - name: End-to-end (dev build)
+        if: needs.changes.outputs.version_only != 'true'
         run: npx playwright test
       - name: Package
+        if: needs.changes.outputs.version_only != 'true'
         run: npx electron-builder ${{ matrix.target }} --publish never
       - name: End-to-end (packaged app)
+        if: needs.changes.outputs.version_only != 'true'
         shell: bash
         env:
           FINANCE_E2E_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
         run: npx playwright test
       # electron-updater (#3353) reads resources/app-update.yml in the app and latest.yml from the release.
       - name: Verify update feed (Windows)
-        if: runner.os == 'Windows'
+        if: needs.changes.outputs.version_only != 'true' && (runner.os == 'Windows')
         shell: bash
         run: |
           v=$(node -p "require('./package.json').version")
@@ -73,27 +99,27 @@ jobs:
           grep -qx "provider: github" dist-release/win-unpacked/resources/app-update.yml
           grep -qx "repo: finance-dashboard" dist-release/win-unpacked/resources/app-update.yml
       - name: Verify app icon (Windows)
-        if: runner.os == 'Windows'
+        if: needs.changes.outputs.version_only != 'true' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
           ./scripts/check-win-icon.ps1 "dist-release/win-unpacked/Finance Dashboard.exe" "dist-release/Finance-Dashboard-Setup-$v.exe"
       - name: Verify app icon (macOS)
-        if: runner.os == 'macOS'
+        if: needs.changes.outputs.version_only != 'true' && (runner.os == 'macOS')
         run: |
           app="dist-release/mac-universal/Finance Dashboard.app"
           icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app/Contents/Info.plist")
           echo "CFBundleIconFile=$icon"
           cmp build/icon.icns "$app/Contents/Resources/${icon%.icns}.icns"
       - name: Verify macOS signature
-        if: runner.os == 'macOS'
+        if: needs.changes.outputs.version_only != 'true' && (runner.os == 'macOS')
         run: |
           for app in dist-release/mac-universal/*.app; do
             echo "== $app ($(lipo -archs "$app/Contents/MacOS/Finance Dashboard"))"
             codesign --verify --deep --strict --verbose=2 "$app"
           done
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: needs.changes.outputs.version_only != 'true' && (always())
         with:
           name: finance-dashboard-${{ runner.os }}
           path: |
