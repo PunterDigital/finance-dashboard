@@ -107,6 +107,11 @@ npm run package      # electron-builder for the current OS
   `-c.publish.provider=generic` override fails electron-builder's schema) and serve `latest.yml` + the installer.
   Never click "Restart to update". Afterwards delete only `%LOCALAPPDATA%/finance-dashboard-updater/pending`:
   the folder's `installer.exe` belongs to the real install (NSIS keeps a copy there for differential updates).
+- E2E never takes focus (#4616): Shay uses (or games on) the PC while runs test this app. With
+  `FINANCE_E2E_USER_DATA` set, the window is created hidden and shown with `showInactive()`, off the
+  taskbar, with `backgroundThrottling` and Chromium's occluded-window/renderer backgrounding off.
+  Specs must not call `bringToFront()` or `BrowserWindow.focus()`. After touching window creation,
+  check a full run with a foreground-window logger (`GetForegroundWindow` poll).
 - E2E restarts: the `relaunch()` fixture (`tests/e2e/app.ts`) closes the app and starts it again on the
   same temp profile, returning the new window. Wait for background saves to land (poll the API) before
   calling it.

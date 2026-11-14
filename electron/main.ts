@@ -8,6 +8,15 @@ if (process.env.FINANCE_E2E_USER_DATA) app.setPath('userData', process.env.FINAN
 // Read by server/db.ts when the server module is first imported (below, after this is set).
 process.env.FINANCE_DATA_DIR = app.getPath('userData');
 
+// An E2E profile means a test run, which may happen while Shay uses the PC (or games, fullscreen).
+// Its window opens without taking focus and stays off the taskbar (#4616). Chromium would
+// throttle a window that sits behind another app, which stalls the tests, so that is off too.
+const isTestProfile = !!process.env.FINANCE_E2E_USER_DATA;
+if (isTestProfile) {
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+}
+
 let win: BrowserWindow | null = null;
 let baseUrl = '';
 
@@ -35,8 +44,16 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'Finance Dashboard',
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+    show: !isTestProfile,
+    skipTaskbar: isTestProfile,
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      backgroundThrottling: !isTestProfile,
+    },
   });
+  if (isTestProfile) win.once('ready-to-show', () => win?.showInactive());
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
