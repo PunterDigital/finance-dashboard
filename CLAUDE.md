@@ -110,3 +110,7 @@ npm run package      # electron-builder for the current OS
 - E2E restarts: the `relaunch()` fixture (`tests/e2e/app.ts`) closes the app and starts it again on the
   same temp profile, returning the new window. Wait for background saves to land (poll the API) before
   calling it.
+- Release bumps skip the heavy CI (Shay, Nov 14). The `Detect release bump` job runs
+  `scripts/is-version-bump.mjs <base> <head>` (merge-base diff): when only the version lines in `package.json`, the app's own entries in `package-lock.json`
+  and `CHANGELOG.md` change, every step of the `E2E + package` matrix job is skipped (per step, not per job: a skipped matrix job reports one unexpanded check name, and the required per-OS checks never arrive). The tag's release workflow still builds and checks everything.
+  Keep a release commit to exactly those edits, or it gets the full run. New version files go in the script's `RULES`.
